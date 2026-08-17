@@ -14,6 +14,7 @@ Deployed on Streamlit Community Cloud as a private app.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -30,6 +31,12 @@ import prospect_drafter as pd_lib
 
 APP_DIR = Path(__file__).parent
 CONFIG_PATH = APP_DIR / "config.json"
+
+# Kept separate from pd_lib.GRAPH_SCOPES (mail-only) on purpose: OneDrive access is an
+# independent, optional sign-in. If the Entra app registration doesn't have Files.ReadWrite
+# added yet, only the OneDrive connect button fails — the working Outlook connection is
+# never put at risk by bundling an unapproved scope into it.
+ONEDRIVE_SCOPES = "offline_access Files.ReadWrite User.Read"
 
 st.set_page_config(page_title="Prospect Drafter", page_icon="✉️", layout="centered")
 
@@ -220,12 +227,12 @@ def graph_has_reply(token: str, email: str, since: date) -> bool:
     return bool(r.json().get("value"))
 
 
-def device_code_start(cfg: dict) -> dict:
+def device_code_start(cfg: dict, scope: str | None = None) -> dict:
     import requests
     r = requests.post(
         f"{pd_lib.LOGIN_BASE}/{cfg['outlook'].get('graph_tenant_id') or 'organizations'}"
         "/oauth2/v2.0/devicecode",
-        data={"client_id": cfg["outlook"]["graph_client_id"], "scope": pd_lib.GRAPH_SCOPES},
+        data={"client_id": cfg["outlook"]["graph_client_id"], "scope": scope or pd_lib.GRAPH_SCOPES},
         timeout=30,
     )
     r.raise_for_status()
@@ -259,6 +266,107 @@ def device_code_poll(cfg: dict, device_code: str, seconds: int = 150) -> dict | 
             continue
         raise RuntimeError(body.get("error_description", err))
     return None
+
+
+def encode_sharing_url(url: str) -> str:
+    """Turn a normal OneDrive/SharePoint 'Copy link' URL into the token the /shares
+    endpoint needs: unpadded base64url, prefixed with 'u!'."""
+    b64 = base64.b64encode(url.strip().encode("utf-8")).decode("ascii")
+    return "u!" + b64.rstrip("=").replace("/", "_").replace("+", "-")
+
+
+def resolve_onedrive_link(token: str, url: str) -> dict:
+    """Resolve a sharing link to a driveItem. Returns id, name, driveId, webUrl."""
+    import requests
+    encoded = encode_sharing_url(url)
+    r = requests.get(
+        f"{pd_lib.GRAPH_BASE}/shares/{encoded}/driveItem",
+        headers={"Authorization": f"Bearer {token}", "Prefer": "redeemSharingLink"},
+        params={"$select": "id,name,webUrl,size,parentReference"},
+        timeout=30,
+    )
+    if r.status_code == 404:
+        raise RuntimeError("That link doesn't seem to point to a file — check it's the right one.")
+    if r.status_code == 401:
+        raise RuntimeError("Sign-in has expired. Click Connect to OneDrive again.")
+    if r.status_code != 200:
+        raise RuntimeError(f"Could not open that link ({r.status_code}): {r.text[:200]}")
+    item = r.json()
+    drive_id = (item.get("parentReference") or {}).get("driveId")
+    if not drive_id or not item.get("id"):
+        raise RuntimeError("Microsoft didn't return enough information to identify that file.")
+    return {"drive_id": drive_id, "item_id": item["id"], "name": item.get("name", "spreadsheet.xlsx")}
+
+
+def onedrive_download(token: str, drive_id: str, item_id: str) -> bytes:
+    import requests
+    r = requests.get(
+        f"{pd_lib.GRAPH_BASE}/drives/{drive_id}/items/{item_id}/content",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Could not download the file ({r.status_code}): {r.text[:200]}")
+    return r.content
+
+
+def onedrive_upload(token: str, drive_id: str, item_id: str, data: bytes) -> None:
+    import requests
+    r = requests.put(
+        f"{pd_lib.GRAPH_BASE}/drives/{drive_id}/items/{item_id}/content",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        data=data,
+        timeout=60,
+    )
+    if r.status_code == 423:
+        raise RuntimeError(
+            "The file is currently open in Excel, so OneDrive has it locked. Close it there "
+            "and click this button again."
+        )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Could not save back to OneDrive ({r.status_code}): {r.text[:200]}")
+
+
+def sidebar_onedrive(cfg: dict) -> None:
+    """Connect-to-OneDrive UI. Independent token from the Outlook one, on purpose —
+    see the ONEDRIVE_SCOPES comment above."""
+    if not cfg["outlook"].get("graph_client_id"):
+        st.caption("Not available yet — needs the same one-off setup as Outlook.")
+        return
+    if st.session_state.get("onedrive_token"):
+        st.success("Connected to OneDrive")
+        return
+
+    if st.button("Connect to OneDrive", use_container_width=True):
+        try:
+            st.session_state["onedrive_device_code"] = device_code_start(cfg, ONEDRIVE_SCOPES)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not start sign-in: {exc}")
+        st.rerun()
+
+    dc = st.session_state.get("onedrive_device_code")
+    if dc:
+        st.markdown(f"**Code:** `{dc['user_code']}`")
+        st.markdown(f"1. Open {dc['verification_uri']}\n2. Enter the code\n3. Sign in")
+        with st.spinner("Waiting for sign-in..."):
+            try:
+                tok = device_code_poll(cfg, dc["device_code"])
+            except Exception as exc:  # noqa: BLE001
+                st.error(
+                    f"Sign-in failed: {exc}\n\nIf this mentions the scope or permission not "
+                    "being found, the OneDrive permission hasn't been added to the app "
+                    "registration yet — ask Mo."
+                )
+                tok = None
+        if tok:
+            st.session_state["onedrive_token"] = tok["access_token"]
+            st.session_state.pop("onedrive_device_code", None)
+            st.rerun()
+        else:
+            st.warning("Timed out. Click Connect again.")
 
 
 def sidebar_outlook(cfg: dict) -> None:
@@ -324,6 +432,10 @@ def main() -> None:
         st.subheader("Outlook")
         sidebar_outlook(cfg)
         st.divider()
+        st.subheader("OneDrive")
+        st.caption("Optional — lets you load and save the spreadsheet without downloading it.")
+        sidebar_onedrive(cfg)
+        st.divider()
         if secret("GEMINI_API_KEY"):
             st.caption("AI key configured ✓")
         else:
@@ -332,15 +444,56 @@ def main() -> None:
     # ---- Step 1: the list ---------------------------------------------------
     st.header("1. Your prospect list")
 
-    uploaded = st.file_uploader(
-        "Upload your spreadsheet", type=["xlsx", "xlsm", "csv"],
-        help="The file you keep your prospects in. It is never modified.",
+    source_choice = st.radio(
+        "Where's your spreadsheet?", ["Upload a file", "Load from OneDrive"],
+        horizontal=True, label_visibility="collapsed",
     )
-    if not uploaded:
-        st.info("Upload a spreadsheet to begin.")
-        st.stop()
 
-    path = save_upload(uploaded)
+    path = None
+
+    if source_choice == "Upload a file":
+        st.session_state.pop("onedrive_source", None)
+        uploaded = st.file_uploader(
+            "Upload your spreadsheet", type=["xlsx", "xlsm", "csv"],
+            help="The file you keep your prospects in. It is never modified.",
+        )
+        if not uploaded:
+            st.info("Upload a spreadsheet to begin.")
+            st.stop()
+        path = save_upload(uploaded)
+
+    else:
+        if not st.session_state.get("onedrive_token"):
+            st.info("Connect to OneDrive in the sidebar first.")
+            st.stop()
+
+        link = st.text_input(
+            "Paste the OneDrive link to your spreadsheet",
+            help="In OneDrive or Excel Online: right-click the file → Copy link.",
+        )
+        loaded = st.session_state.get("onedrive_source")
+
+        if st.button("Load from OneDrive", use_container_width=True, disabled=not link.strip()):
+            try:
+                info = resolve_onedrive_link(st.session_state["onedrive_token"], link.strip())
+                data = onedrive_download(
+                    st.session_state["onedrive_token"], info["drive_id"], info["item_id"]
+                )
+                dest = APP_DIR / "_uploads"
+                dest.mkdir(exist_ok=True)
+                local_path = dest / info["name"]
+                local_path.write_bytes(data)
+                st.session_state["onedrive_source"] = {**info, "local_path": str(local_path)}
+                st.success(f"Loaded **{info['name']}**.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                st.error(str(exc))
+
+        if not loaded:
+            st.stop()
+        st.caption(f"Using **{loaded['name']}** from OneDrive.")
+        path = Path(loaded["local_path"])
+
     cfg["spreadsheet"]["path"] = str(path)
 
     try:
@@ -602,20 +755,40 @@ def main() -> None:
     st.divider()
     st.subheader("Keep your spreadsheet up to date")
     st.caption(
-        "Download this and save it over your own copy. It records who you just handled and "
-        "when, which is what makes the follow-ups work later."
+        "This records who you just handled and when, which is what makes the follow-ups "
+        "work later."
     )
     updates = {d["to"].lower(): {"touches": d["touches_after"], "date": today} for d in approved}
+    onedrive_source = st.session_state.get("onedrive_source")
+
     try:
+        updated_bytes = spreadsheet_with_progress(
+            Path(st.session_state["source_path"]), updates, cfg
+        )
+    except Exception as exc:  # noqa: BLE001
+        updated_bytes = None
+        st.caption(f"(Could not build the updated spreadsheet: {exc})")
+
+    if updated_bytes is not None and onedrive_source:
+        if st.button("Save back to OneDrive", type="primary", use_container_width=True):
+            try:
+                onedrive_upload(
+                    st.session_state["onedrive_token"],
+                    onedrive_source["drive_id"], onedrive_source["item_id"], updated_bytes,
+                )
+                st.success(f"Saved back to **{onedrive_source['name']}** in OneDrive.")
+            except Exception as exc:  # noqa: BLE001
+                st.error(str(exc))
+        st.caption("Or keep a local copy too:")
+
+    if updated_bytes is not None:
         st.download_button(
             "Download updated spreadsheet",
-            data=spreadsheet_with_progress(Path(st.session_state["source_path"]), updates, cfg),
+            data=updated_bytes,
             file_name=f"prospects_updated_{today:%Y-%m-%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
-    except Exception as exc:  # noqa: BLE001
-        st.caption(f"(Could not build the updated spreadsheet: {exc})")
 
 
 if __name__ == "__main__":

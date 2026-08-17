@@ -22,6 +22,13 @@ website. Anyone already marked as done in the Status column is skipped automatic
 
 Your file isn't changed. The app only reads it.
 
+**If "Load from OneDrive" is available** (it may not be yet — ask Mo), you can skip the
+upload/download entirely. Click **Connect to OneDrive** in the sidebar once per session, then
+choose **Load from OneDrive** at the top of this step, paste a "Copy link" from your
+spreadsheet in OneDrive or Excel Online, and click **Load from OneDrive**. Later, in step 6,
+you'll get a **Save back to OneDrive** button that writes the tracking columns straight back
+to that same file — no downloading and re-uploading needed.
+
 ---
 
 ## 2. Choose which email you're sending
@@ -91,7 +98,10 @@ message already filled in. Check it and press Send. Then come back for the next 
 
 ## 6. Update your spreadsheet
 
-At the bottom, click **Download updated spreadsheet** and save it over your own copy.
+If you loaded your list from OneDrive, click **Save back to OneDrive** — it writes straight to
+your file, no download needed. (If it says the file is locked, close it in Excel first and
+click the button again.) Otherwise, click **Download updated spreadsheet** and save it over
+your own copy — this button is always there too, even when OneDrive is connected, as a backup.
 
 **This is the step that makes follow-ups work.** The app records how many emails each person
 has had and the date, in three columns: `Touches`, `First Contact Date` and `Last Contact

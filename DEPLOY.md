@@ -49,6 +49,17 @@ Two constraints worth knowing before you start:
 > The `.gitignore` already excludes `secrets.toml` and `_uploads/`. Keys go in Streamlit's
 > settings, never in the repo.
 
+> **Watch out for GitHub's drag-and-drop uploader with dotfiles.** It can silently mishandle
+> `.gitignore` and `.streamlit/config.toml` — turning `.gitignore` into a plain file literally
+> named `download`, and flattening `.streamlit/config.toml` into a root-level `config.toml`.
+> Both look like they uploaded fine but land in the wrong place and do nothing. If you already
+> have the repo on your machine, it's more reliable to use a real git client instead — either
+> the command line (`git add .gitignore .streamlit/config.toml && git commit -m "..." && git
+> push`) or **GitHub Desktop** (free, https://desktop.github.com) — rather than the website's
+> upload button, for these two files specifically. Afterwards, check on github.com that
+> `.gitignore` and `.streamlit/config.toml` show up as their own files/folder, not as
+> `download` or a root `config.toml`.
+
 ---
 
 ## Step 2 — Deploy on Streamlit
@@ -107,6 +118,39 @@ GRAPH_TENANT_ID = "organizations"
 
 Save, and the app reboots with the **Straight into Outlook** tab live. She clicks Connect, gets a
 short code, signs in once per session, and drafts land in her own Drafts folder.
+
+---
+
+## Step 6 (later, optional) — Turn on "Load/save from OneDrive"
+
+The app already has the code for this. It's off until the app registration has one more
+permission than `IT-REQUEST.md` currently asks for — **`Files.ReadWrite`** (delegated). That
+request hasn't been sent yet; this is here so the feature is ready the moment it has been.
+
+What it adds once it's live: in Step 1 she can choose **Load from OneDrive**, paste a "Copy
+link" from her spreadsheet in OneDrive/Excel Online instead of uploading a file, and after
+drafting there's a **Save back to OneDrive** button that writes the updated `Touches` /
+`First Contact Date` / `Last Contact Date` columns straight back to that same file — no
+download/re-upload round trip. The **Download updated spreadsheet** button stays as a
+fallback either way.
+
+It uses its own **Connect to OneDrive** button in the sidebar, separate from the Outlook one,
+so if the new permission isn't approved yet only that button shows "Not available yet" — the
+Outlook connection nothing else depends on it.
+
+To switch it on when you're ready:
+
+1. Ask IT to add `Files.ReadWrite` (delegated, work/school account) to the same Entra app
+   registration used for `Mail.ReadWrite` — same consent tier, no admin approval beyond what
+   `Mail.ReadWrite` already needed.
+2. Nothing else changes — the same `GRAPH_CLIENT_ID` / `GRAPH_TENANT_ID` secrets cover both.
+3. If she tries "Connect to OneDrive" before the permission is added, the sign-in will fail
+   with a message about the scope not being found — that's expected, not a bug. Once IT adds
+   it, it works on her next sign-in with no redeploy needed.
+
+**A OneDrive-wide permission, not a one-file one.** `Files.ReadWrite` grants access to her
+entire OneDrive while she's signed into the app, the same way `Mail.ReadWrite` grants access
+to her whole mailbox rather than one folder. Worth knowing before asking for it.
 
 ---
 
