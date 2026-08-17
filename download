@@ -1,0 +1,4 @@
+_uploads/
+.streamlit/secrets.toml
+__pycache__/
+*.pyc

@@ -1,0 +1,108 @@
+{
+  "spreadsheet": {
+    "path": "prospects.xlsx",
+    "sheet_name": "Sheet1",
+    "header_row": 1,
+    "columns": {
+      "company": "Company",
+      "first_name": "First Name",
+      "last_name": "Last Name",
+      "job_title": "Job Title",
+      "email": "Email",
+      "website": "Website",
+      "linkedin": "Linkedin",
+      "notes": "",
+      "status": "Status",
+      "touches": "Touches",
+      "first_contact_date": "First Contact Date",
+      "last_contact_date": "Last Contact Date"
+    },
+    "skip_when_status_in": [
+      "drafted",
+      "sent",
+      "skip",
+      "do not contact",
+      "unsubscribed"
+    ],
+    "context_columns": [
+      "Industry",
+      "Phone",
+      "Country",
+      "Source",
+      "Primary goal",
+      "Package",
+      "Webinars attendence",
+      "Decision-maker?",
+      "Want to be vetted?"
+    ],
+    "stop_statuses": [
+      "replied",
+      "responded",
+      "skip",
+      "do not contact",
+      "unsubscribed",
+      "bounced",
+      "closed",
+      "won",
+      "lost",
+      "customer"
+    ]
+  },
+  "template_path": "template.md",
+  "sender": {
+    "your_name": "Tooka",
+    "your_title": "",
+    "your_company": "World Luxury Chamber of Commerce",
+    "what_you_do": "The World Luxury Chamber of Commerce (WLCC) provides high-level visibility, cross-border connections, and targeted market access for organizations active in the high-net-worth and luxury sectors globally. Outreach is to senior people at real estate developers, brokerages, advisory firms and allied businesses in those sectors.",
+    "signature_html": "<p>Kind regards,<br>Tooka</p>",
+    "mention_prior_call": false
+  },
+  "research": {
+    "enabled": true,
+    "timeout_seconds": 12,
+    "max_chars": 6000,
+    "follow_about_page": true
+  },
+  "ai": {
+    "provider": "gemini",
+    "model": "gemini-flash-lite-latest",
+    "api_key_env": "GEMINI_API_KEY",
+    "delay_seconds": 3,
+    "max_words": 130,
+    "language": "International business English",
+    "base_url": null,
+    "extra_rules": [
+      "Never invent facts about the prospect or their company.",
+      "No flattery openers such as 'I was blown away by'.",
+      "At most one specific, verifiable observation about their business.",
+      "One clear ask at the end.",
+      "Do not use em-dashes.",
+      "Greeting is 'Dear [first name],' not 'Hi'.",
+      "Never claim WLCC does something not stated in the sender description."
+    ]
+  },
+  "output": {
+    "review_file": "review/drafts_review.md",
+    "eml_dir": "review/eml",
+    "state_file": "review/state.json"
+  },
+  "outlook": {
+    "backend": "eml",
+    "graph_client_id": "",
+    "graph_tenant_id": "organizations",
+    "token_cache": "review/.token_cache.json"
+  },
+  "sequence": {
+    "wait_days": 7,
+    "templates": {
+      "1": "template.md",
+      "2": "template_followup_1.md",
+      "3": "template_followup_2.md"
+    },
+    "labels": {
+      "1": "First email",
+      "2": "First follow-up",
+      "3": "Second follow-up"
+    }
+  }
+}
