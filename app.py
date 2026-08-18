@@ -85,6 +85,16 @@ def get_config(workflow: str | None = None) -> dict:
     return cfg
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_ai_key_check(key: str, model: str, base_url: str | None) -> dict:
+    """Cached so the live check runs once every 5 minutes, not on every widget click.
+
+    The key value is part of the cache's own lookup key, so fixing a broken key in Secrets
+    and reloading the app is checked fresh immediately rather than reusing a stale failure.
+    """
+    return pd_lib.check_ai_key(key, model, base_url)
+
+
 # ---------------------------------------------------------------------------
 # HTML <-> plain text, so nobody has to edit HTML tags
 # ---------------------------------------------------------------------------
@@ -595,8 +605,26 @@ def main() -> None:
         "sent** — you read every draft, then it goes into Outlook for you to send yourself."
     )
 
-    # ---- Which workflow ------------------------------------------------------
+    # ---- AI key check, right up front --------------------------------------
+    # A live check, not a guess from the key's shape: this app once flagged a real, working
+    # key as broken purely because of its prefix. Only asking Google settles it, and it's
+    # worth doing before anything else because a broken key means every draft below silently
+    # degrades to the plain [FILL THIS IN] template - better the user hears that now than
+    # discovers it three drafts in.
     base = get_config()
+    ai_key = secret(base["ai"]["api_key_env"])
+    key_check = cached_ai_key_check(ai_key, base["ai"]["model"], base["ai"].get("base_url"))
+    if key_check["ok"] is False:
+        st.error(
+            f"**AI key problem** — {key_check['message']}\n\n"
+            "The app still works without it: every draft will fall back to the plain "
+            "template with `[FILL THIS IN]` gaps for you to complete by hand, instead of a "
+            "written email."
+        )
+    elif key_check["ok"] is None:
+        st.warning(f"Could not confirm the AI key is working — {key_check['message']}")
+
+    # ---- Which workflow ------------------------------------------------------
     names = pd_lib.workflow_names(base)
 
     if len(names) > 1:
@@ -643,10 +671,12 @@ def main() -> None:
         st.caption("Optional — lets you load and save the spreadsheet without downloading it.")
         sidebar_onedrive(cfg)
         st.divider()
-        if secret("GEMINI_API_KEY"):
-            st.caption("AI key configured ✓")
+        if key_check["ok"] is True:
+            st.caption("AI key active ✓")
+        elif key_check["ok"] is False:
+            st.error(key_check["message"])
         else:
-            st.error("No AI key. Ask Mo to add GEMINI_API_KEY in the app settings.")
+            st.caption(f"AI key configured, unverified — {key_check['message']}")
 
     # ---- Step 1: the list ---------------------------------------------------
     st.header("1. Your prospect list")

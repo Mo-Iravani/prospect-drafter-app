@@ -579,6 +579,99 @@ def strip_signoff_html(body_html: str) -> str:
     return text
 
 
+def check_ai_key(key: str, model: str = "", base_url: str | None = None,
+                 timeout: int = 10) -> dict:
+    """Live check that an AI key actually authenticates, and that the model works.
+
+    A key's shape proves nothing on its own: this app once flagged a real, working key as
+    invalid purely because it didn't start with "AIza", when plenty of valid Gemini keys
+    don't. The only way to know a key is good is to ask Google. This calls GET /models,
+    which needs no generation quota, so it is safe to run every time the app opens.
+
+    Returns {"ok": True/False/None, "reason": str, "message": str}. `ok` is None when the
+    check itself could not be completed - a network problem, or Google rate-limiting the
+    check - which is deliberately distinct from the key being bad, and callers should say
+    so rather than treating "couldn't check" as "broken".
+    """
+    key = (key or "").strip()
+    if not key:
+        return {"ok": False, "reason": "missing", "message": "No AI key is set."}
+
+    url = f"{base_url or GEMINI_BASE}/models"
+    try:
+        r = requests.get(url, headers={"x-goog-api-key": key}, timeout=timeout)
+    except requests.exceptions.RequestException as exc:
+        return {
+            "ok": None, "reason": "network",
+            "message": f"Could not reach Google to check the key ({exc.__class__.__name__}).",
+        }
+
+    if r.status_code == 429:
+        return {
+            "ok": None, "reason": "rate_limited",
+            "message": "Google rate-limited the check just now. The key is probably fine.",
+        }
+
+    if r.status_code != 200:
+        # Google does not use HTTP status codes consistently for this: a malformed key comes
+        # back as 400 API_KEY_INVALID, while a well-formed key of the wrong credential type
+        # (an OAuth-style token passed as an API key, which is exactly what happened here
+        # once already) comes back as 401 ACCESS_TOKEN_TYPE_UNSUPPORTED. Reading the error
+        # body's own reason catches both, rather than guessing from the status code alone.
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        details = {
+            d.get("reason", "") for d in err.get("details", []) if isinstance(d, dict)
+        }
+        auth_failure = (
+            err.get("status") in ("UNAUTHENTICATED", "PERMISSION_DENIED")
+            or details & {
+                "API_KEY_INVALID", "ACCESS_TOKEN_TYPE_UNSUPPORTED",
+                "API_KEY_SERVICE_BLOCKED", "API_KEY_HTTP_REFERRER_BLOCKED",
+            }
+            or r.status_code in (401, 403)
+        )
+        if auth_failure:
+            why = err.get("message", "").strip()
+            return {
+                "ok": False, "reason": "rejected",
+                "message": (
+                    f"Google rejected this key ({why})." if why else "Google rejected this key."
+                ) + " Get a fresh one at https://aistudio.google.com/apikey",
+            }
+        return {
+            "ok": None, "reason": "unexpected",
+            "message": f"Unexpected response checking the key (HTTP {r.status_code}).",
+        }
+
+    try:
+        models = r.json().get("models", [])
+    except ValueError:
+        return {"ok": None, "reason": "unexpected",
+                "message": "Google's response could not be read."}
+
+    if not model:
+        return {"ok": True, "reason": "ok", "message": "The AI key is active."}
+
+    entry = next(
+        (m for m in models if m.get("name", "").removeprefix("models/") == model), None
+    )
+    if entry is None:
+        return {
+            "ok": False, "reason": "model_missing",
+            "message": f"The key works, but the model '{model}' isn't available to it.",
+        }
+    if "generateContent" not in entry.get("supportedGenerationMethods", []):
+        return {
+            "ok": False, "reason": "model_unsupported",
+            "message": f"The key works, but '{model}' doesn't support generating text.",
+        }
+    return {"ok": True, "reason": "ok",
+            "message": f"The AI key is active and '{model}' is available."}
+
+
 def call_gemini(cfg: dict, system_prompt: str, user_prompt: str) -> dict[str, str]:
     ai = cfg["ai"]
     key = os.environ.get(ai["api_key_env"], "").strip()
