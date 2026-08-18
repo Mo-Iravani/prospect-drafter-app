@@ -5,6 +5,29 @@ before anything happens. **It never sends anything** — you always press Send y
 
 ---
 
+## Pick your workflow first
+
+At the top of the page there are two buttons. Choose before you do anything else, because
+everything below changes with it.
+
+**In-bound Leads** — people who came to WLCC. The app reads the **Inbound Leads** sheet and
+tracks progress in its **Status** column (column C).
+
+**Cold Call** — cold outreach. The app reads the **Cold Database in Work** sheet, you pick
+which **WLCC Fit Scores** to work first, and it tracks progress in that sheet's **Status**
+column (column A). The emails are written cold: they never claim the person contacted WLCC
+first.
+
+Both read the same master report, just different sheets — so you upload the one file either
+way. Both now work identically: the Status dropdown is what tells the app which email is due,
+and the Status dropdown is what it updates afterwards. The only real differences are which
+sheet they read, and that Cold Call asks for a Fit Score first.
+
+If you switch workflow after writing drafts, the drafts are cleared. That's deliberate — it
+stops one workflow's batch being recorded into the other's sheet by mistake.
+
+---
+
 ## Opening it
 
 Click the link in the invitation email and sign in with your work email address. Bookmark the page.
@@ -21,6 +44,28 @@ You'll see three numbers: how many rows it found, how many are ready, and how ma
 website. Anyone already marked as done in the Status column is skipped automatically.
 
 Your file isn't changed. The app only reads it.
+
+### The Active sheet
+
+Under the upload box the app shows the **Active sheet** — the one it is reading. It picks this
+for you from the workflow you chose:
+
+| Workflow | Sheet it reads | Status column |
+| --- | --- | --- |
+| In-bound Leads | `Inbound Leads` | C |
+| Cold Call | `Cold Database in Work` | A |
+
+Normally you can just glance at it and carry on. You only need to touch the dropdown if you
+keep that data on a differently named sheet, and if you do change it the app warns you, because
+the column names on the sheet you pick have to match what the workflow expects. If the sheet the
+workflow wants isn't in the file at all, it says so rather than reading the wrong thing quietly.
+
+Whichever sheet is shown there is the sheet that gets written back to in step 6. The sheet
+marked *active in Excel* is simply the tab that was open when the file was last saved.
+
+**On Cold Call**, after that you get a **WLCC Fit Score** box: tick the scores you want to work,
+and you can tick more than one. 5 is the best fit. Rows with no score yet are left out, and the
+app tells you how many that was.
 
 **If "Load from OneDrive" is available** (it may not be yet — ask Mo), you can skip the
 upload/download entirely. Click **Connect to OneDrive** in the sidebar once per session, then
@@ -40,6 +85,26 @@ Three options, and the app tells you how many people are ready for each:
   contacted at least a week ago.
 - **Second follow-up** — same again, one step further along. This is the last one; nobody
   gets a fourth email.
+
+Both workflows work this out from the Status column. On **Cold Call** the three stages are
+called First, Second and Third email; on **In-bound Leads** they keep the names above. Either
+way the rule is the same:
+
+| Status now | Stage they're due | Status becomes |
+| --- | --- | --- |
+| blank | First email | `First Contact` |
+| `First Contact` | Second email | `Follow-up 1 Sent` |
+| `Follow-up 1 Sent` | Third email | `Follow-up 2 Sent` |
+
+Anything else in that column means the app leaves the row alone: `Replied – Positive`,
+`Replied – Neutral`, `Replied – Negative`, `No Response`, `Not a Fit`, `Moved to Active`, and
+`Follow-up 3 Sent (Final)`. Rows already at `Follow-up 2 Sent` have had all three emails, so
+they aren't offered again either. On Cold Call, a row marked `Interested? = NO` is skipped too,
+whatever its Status says.
+
+A blank Status is what makes a row due a *first* email. So if every row on a sheet already has
+a status, "First email" will show zero ready — that's correct, not a fault. New rows you add
+with a blank Status will appear there.
 
 You don't have to work out who's due. The app does that from your spreadsheet. If a stage
 shows zero, click **Why not?** and it explains each person's situation.
@@ -61,6 +126,16 @@ rest. Each one takes a few seconds because the app is reading their website firs
 **The "I tried phoning these people first" tick box** (first email only) adds the sentence
 about having tried to call. Only tick it if you actually rang them — everyone in that batch.
 Left unticked, the sentence is left out completely.
+
+On **Cold Call** the box starts unticked, because Tooka's approved cold email doesn't mention a
+call. Tick it only for a batch you have actually rung, and it adds one short line saying you
+tried to reach them. The app also passes the `Why WLCC?` note and the `Call Result` note from
+the sheet to the AI, so a good `Why WLCC?` line makes a noticeably better email.
+
+The Cold Call first email follows Tooka's approved sample: "I hope this email finds you well",
+then one line on what specifically impressed you about the firm, then the WLCC "select number
+of firms" paragraph, then the ask. The first email signs off **Best Regards**; emails two and
+three sign off **Kind regards**. That difference is deliberate.
 
 ---
 
@@ -103,13 +178,18 @@ your file, no download needed. (If it says the file is locked, close it in Excel
 click the button again.) Otherwise, click **Download updated spreadsheet** and save it over
 your own copy — this button is always there too, even when OneDrive is connected, as a backup.
 
-**This is the step that makes follow-ups work.** The app records how many emails each person
-has had and the date, in three columns: `Touches`, `First Contact Date` and `Last Contact
-Date`. Without it, the app can't tell who's due a follow-up next week — and you risk sending
-someone the same first email twice.
+**This is the step that makes follow-ups work.** Without it, the app can't tell who's due a
+follow-up next week — and you risk sending someone the same first email twice.
 
-If you don't send a draft after all, set that person's `Touches` back down by one, or set
-their Status to `Skip`.
+In **both workflows** it moves each row's **Status** on one step and stamps the two date
+columns. Before you save, open **Which rows change** and check the list — it names every row
+number and company it's about to touch. If you don't send a draft after all, set that row's
+Status back to what it was.
+
+The save is deliberately careful with the master report: it edits only those few cells on the
+one sheet you were working, and leaves the rest of the workbook exactly as it was, so the
+dropdowns and the colour rules on the other sheets survive. Even so, keep your own copy the
+first time you use it.
 
 ---
 
@@ -124,9 +204,9 @@ one whose name is on the email.
 **If a draft mentions something that isn't true about that company**, untick it and tell Mo.
 That shouldn't happen and he'll want to know.
 
-**Status words the app respects.** Type any of these into the Status column and that person
-is left alone permanently: `Replied`, `Skip`, `Do not contact`, `Unsubscribed`, `Bounced`,
-`Customer`, `Won`, `Lost`. Use `Replied` the moment someone answers.
+**Status words the app respects.** Use the dropdown already in the Status column — the same
+list on both sheets. See the table in step 2 for which value means what. Mark someone as
+replied the moment they answer, and the app will leave them alone from then on.
 
 **If you get an error**, take a screenshot and send it to Mo. Nothing you do in the app can
 break anything or send anything by accident.

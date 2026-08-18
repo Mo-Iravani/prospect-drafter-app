@@ -4,7 +4,19 @@ Prospect Drafter — web app.
 Four steps: upload the list, pick which email in the sequence, read the drafts,
 put them in Outlook. Nothing is ever sent.
 
-Sequence stages:
+Two workflows, chosen at the top of the page and configured under "workflows" in
+config.json. Both read the same WLCC master report, on different sheets, and both work
+the same way: which email is due is read off that sheet's Status column, and the Status
+column is what gets written back.
+
+    In-bound Leads  people who came to WLCC. Sheet "Inbound Leads", Status in column C.
+    Cold Call       cold outreach. Sheet "Cold Database in Work", Status in column A,
+                    and rows are picked by WLCC Fit Score first.
+
+Nothing here is workflow-specific in code: the sheet, the columns, the templates and
+whether there is a score to filter on all come from config.
+
+Sequence stages, in both workflows:
     1  first email
     2  follow-up, ~7 days later, only if they didn't reply
     3  final follow-up, ~7 days after that
@@ -22,12 +34,14 @@ import re
 import time
 import urllib.parse
 import zipfile
+from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
 import streamlit as st
 
 import prospect_drafter as pd_lib
+import xlsx_patch
 
 APP_DIR = Path(__file__).parent
 CONFIG_PATH = APP_DIR / "config.json"
@@ -59,8 +73,10 @@ def secret(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
-def get_config() -> dict:
+def get_config(workflow: str | None = None) -> dict:
     cfg = json.loads(json.dumps(load_config()))
+    if workflow:
+        cfg = pd_lib.apply_workflow(cfg, workflow)
     if secret("GRAPH_CLIENT_ID"):
         cfg["outlook"]["graph_client_id"] = secret("GRAPH_CLIENT_ID")
     if secret("GRAPH_TENANT_ID"):
@@ -70,6 +86,16 @@ def get_config() -> dict:
         if val:
             cfg["sender"][key] = val
     return cfg
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_ai_key_check(key: str, model: str, base_url: str | None) -> dict:
+    """Cached so the live check runs once every 5 minutes, not on every widget click.
+
+    The key value is part of the cache's own lookup key, so fixing a broken key in Secrets
+    and reloading the app is checked fresh immediately rather than reusing a stale failure.
+    """
+    return pd_lib.check_ai_key(key, model, base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +198,173 @@ def spreadsheet_with_progress(source: Path, updates: dict[str, dict], cfg: dict)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def workbook_sheets(source: Path) -> tuple[list[str], str | None]:
+    """Visible sheet names, plus whichever sheet Excel had active when it was saved.
+
+    Hidden sheets are left out: this workbook keeps its dropdown lists on a hidden
+    "Sheet Info" tab, and offering that as somewhere to read prospects from is noise.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(source, read_only=True)
+    try:
+        visible = [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
+        try:
+            active = wb.active.title if wb.active is not None else None
+        except Exception:  # noqa: BLE001 - a stale active index shouldn't stop the upload
+            active = None
+        return (visible or list(wb.sheetnames)), active
+    finally:
+        wb.close()
+
+
+def sheet_selector(source: Path, cfg: dict) -> str | None:
+    """Show which sheet the app is about to read, and let it be changed.
+
+    Each workflow names the sheet it expects, so the normal case is that this is already
+    correct and the user just sees it confirmed. Returns None for CSV, which has no sheets.
+    """
+    if source.suffix.lower() == ".csv":
+        st.caption("A CSV has just the one sheet.")
+        return None
+
+    try:
+        names, excel_active = workbook_sheets(source)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Could not open that workbook: {exc}")
+        st.stop()
+
+    want = str(cfg["spreadsheet"].get("sheet_name") or "").strip()
+    label = cfg.get("workflow", {}).get("label", "this workflow")
+    configured = pd_lib.find_sheet(names, want)
+    default = pd_lib.resolve_sheet_name(names, want, excel_active)
+
+    st.markdown("**Active sheet**")
+    chosen = st.selectbox(
+        "Active sheet",
+        options=names,
+        index=names.index(default),
+        label_visibility="collapsed",
+        format_func=lambda n: f"{n}  ·  active in Excel" if n == excel_active else n,
+        help=(
+            f"The {label} workflow reads “{want}”. Change this only if you keep that data "
+            "on a differently named sheet."
+            if want else "Which sheet holds the prospects."
+        ),
+    )
+
+    if want and not configured:
+        st.warning(
+            f"This workbook has no **{want}** sheet, which is the one the **{label}** "
+            f"workflow expects. Reading **{chosen}** instead — check that's right, or "
+            "switch workflow."
+        )
+    elif configured and chosen != configured:
+        st.warning(
+            f"Reading **{chosen}**, not the **{configured}** sheet that **{label}** "
+            "normally uses. The column names have to match, or nothing will be found."
+        )
+    else:
+        st.caption(f"Reading **{chosen}** — the sheet the {label} workflow expects.")
+
+    return chosen
+
+
+# ---------------------------------------------------------------------------
+# Cold Call: fit score filter and Status write-back
+# ---------------------------------------------------------------------------
+
+def fit_score_filter(prospects: list, cfg: dict) -> list:
+    """Let the user pick which WLCC Fit Scores to work, and keep only those rows.
+
+    This is step one of the Cold Call workflow: the score in column B is a human
+    judgement about how well a company fits WLCC, and the whole point is to work the
+    good ones first rather than the whole 800-row database.
+    """
+    spec = cfg["workflow"]["fit_score"]
+    label = spec.get("label", "Fit score")
+    present = pd_lib.fit_score_values(prospects, cfg)
+    counts = Counter(p.fit_score for p in prospects)
+    unscored = counts.get("", 0)
+
+    if not present:
+        st.error(
+            f'No "{label}" values found in this sheet. Check the sheet and the '
+            f"`fit_score` column name in the Cold Call config."
+        )
+        st.stop()
+
+    st.markdown(f"**Which {label}s are you working?**")
+    default = [s for s in spec.get("default", []) if s in present] or present[:1]
+    chosen = st.multiselect(
+        label, options=present, default=default,
+        format_func=lambda s: f"{s} — {counts[s]} companies",
+        label_visibility="collapsed",
+        help="Pick one or more. 5 is the best fit. Only these rows go any further.",
+    )
+    if not chosen:
+        st.warning(f"Pick at least one {label} to carry on.")
+        st.stop()
+
+    kept = [p for p in prospects if p.fit_score in set(chosen)]
+    st.caption(
+        f"**{len(kept)}** companies scored {', '.join(chosen)}."
+        + (f" {unscored} rows have no score yet and are left out." if unscored else "")
+    )
+    if not kept:
+        st.warning("No rows have those scores.")
+        st.stop()
+    return kept
+
+
+def status_writeback_edits(drafts: list[dict], cfg: dict, today: date) -> dict[int, dict[str, object]]:
+    """The cell edits that record this batch: Status, and the two contact dates.
+
+    Keyed by worksheet row rather than by email address, because the cold database has
+    duplicate and blank email cells and the row number is exact.
+    """
+    wb = cfg["workflow"]["writeback"]
+    status_col = str(wb.get("status_column") or "").strip()
+    first_col = str(wb.get("first_contact_column") or "").strip()
+    last_col = str(wb.get("last_contact_column") or "").strip()
+
+    edits: dict[int, dict[str, object]] = {}
+    for d in drafts:
+        cells: dict[str, object] = {}
+        if status_col and d.get("next_status"):
+            cells[status_col] = d["next_status"]
+        # First Contact Date is written once and then left alone.
+        if first_col and d.get("needs_first_date"):
+            cells[first_col] = today
+        if last_col:
+            cells[last_col] = today
+        if cells:
+            edits[int(d["row"])] = cells
+    return edits
+
+
+def status_writeback(source: Path, drafts: list[dict], cfg: dict, today: date) -> bytes:
+    """The workbook with this batch's Status and dates written in.
+
+    Uses xlsx_patch rather than openpyxl on purpose. See that module's docstring: an
+    openpyxl save of the WLCC master workbook drops the dropdowns and most of the
+    conditional formatting on the other sheets.
+    """
+    if source.suffix.lower() not in (".xlsx", ".xlsm"):
+        raise RuntimeError(
+            "Writing the Status column back needs the Excel file itself (.xlsx), not a CSV."
+        )
+    edits = status_writeback_edits(drafts, cfg, today)
+    if not edits:
+        raise RuntimeError("Nothing to write back.")
+    return xlsx_patch.patch_workbook_bytes(
+        source.read_bytes(),
+        cfg["spreadsheet"]["sheet_name"],
+        edits,
+        int(cfg["spreadsheet"].get("header_row", 1)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -409,16 +602,70 @@ def sidebar_outlook(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    cfg = get_config()
-    seq = cfg["sequence"]
-    labels = {int(k): v for k, v in seq["labels"].items()}
-    wait_days = int(seq.get("wait_days", 7))
-
     st.title("✉️ Prospect Drafter")
     st.caption(
         "Reads each prospect's website and writes a personalised email. **Nothing is ever "
         "sent** — you read every draft, then it goes into Outlook for you to send yourself."
     )
+
+    # ---- AI key check, right up front --------------------------------------
+    # A live check, not a guess from the key's shape: this app once flagged a real, working
+    # key as broken purely because of its prefix. Only asking Google settles it, and it's
+    # worth doing before anything else because a broken key means every draft below silently
+    # degrades to the plain [FILL THIS IN] template - better the user hears that now than
+    # discovers it three drafts in.
+    base = get_config()
+    ai_key = secret(base["ai"]["api_key_env"])
+    key_check = cached_ai_key_check(ai_key, base["ai"]["model"], base["ai"].get("base_url"))
+    if key_check["ok"] is False:
+        st.error(
+            f"**AI key problem** — {key_check['message']}\n\n"
+            "The app still works without it: every draft will fall back to the plain "
+            "template with `[FILL THIS IN]` gaps for you to complete by hand, instead of a "
+            "written email."
+        )
+    elif key_check["ok"] is None:
+        st.warning(f"Could not confirm the AI key is working — {key_check['message']}")
+
+    # ---- Which workflow ------------------------------------------------------
+    names = pd_lib.workflow_names(base)
+
+    if len(names) > 1:
+        workflow = st.radio(
+            "Workflow",
+            options=names,
+            format_func=lambda n: pd_lib.workflow_label(base, n),
+            horizontal=True,
+            key="workflow",
+        )
+    else:
+        workflow = names[0] if names else None
+
+    cfg = get_config(workflow)
+    wf = cfg.get("workflow", {})
+    # Branch on what a workflow *does*, not on which one it is. Both workflows are now
+    # status-driven against the same workbook, and the only differences left between them
+    # live in config: which sheet, which columns, whether there is a score to filter on.
+    seq_gate = str(cfg["sequence"].get("gate", "touches")).lower()
+    uses_status = seq_gate == "status"
+    has_fit_score = bool(wf.get("fit_score"))
+    patch_writeback = str((wf.get("writeback") or {}).get("mode", "")).lower() == "patch"
+    if wf.get("blurb"):
+        st.caption(wf["blurb"])
+
+    # Drafts belong to the workflow they were written for. Switching workflow clears them so
+    # a batch can never be written back through the other workflow's settings. This matters
+    # more now that both workflows patch the same workbook: they use different sheets and
+    # different Status columns (C vs A), so a mismatched write-back would put a status into
+    # the wrong column of the wrong sheet.
+    if st.session_state.get("drafted_workflow") not in (None, workflow):
+        for key in ("drafts", "stage", "source_path", "replied"):
+            st.session_state.pop(key, None)
+        st.session_state.pop("drafted_workflow", None)
+
+    seq = cfg["sequence"]
+    labels = {int(k): v for k, v in seq["labels"].items()}
+    wait_days = int(seq.get("wait_days", 7))
 
     with st.sidebar:
         st.subheader("Your details")
@@ -436,10 +683,12 @@ def main() -> None:
         st.caption("Optional — lets you load and save the spreadsheet without downloading it.")
         sidebar_onedrive(cfg)
         st.divider()
-        if secret("GEMINI_API_KEY"):
-            st.caption("AI key configured ✓")
+        if key_check["ok"] is True:
+            st.caption("AI key active ✓")
+        elif key_check["ok"] is False:
+            st.error(key_check["message"])
         else:
-            st.error("No AI key. Ask Mo to add GEMINI_API_KEY in the app settings.")
+            st.caption(f"AI key configured, unverified — {key_check['message']}")
 
     # ---- Step 1: the list ---------------------------------------------------
     st.header("1. Your prospect list")
@@ -496,11 +745,23 @@ def main() -> None:
 
     cfg["spreadsheet"]["path"] = str(path)
 
+    chosen_sheet = sheet_selector(path, cfg)
+    if chosen_sheet:
+        # Everything downstream reads this, including the Cold Call write-back, so the
+        # sheet that gets patched is always the sheet that was read.
+        cfg["spreadsheet"]["sheet_name"] = chosen_sheet
+
     try:
         prospects = pd_lib.read_prospects(cfg)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Could not read that file: {exc}")
         st.stop()
+
+    st.write(f"**{len(prospects)}** rows read.")
+
+    # ---- Pick the fit scores to work, where the sheet has them ---------------
+    if has_fit_score:
+        prospects = fit_score_filter(prospects, cfg)
 
     today = date.today()
     buckets: dict[int, list] = {}
@@ -513,7 +774,6 @@ def main() -> None:
         buckets[stage] = ok
         reasons[stage] = no
 
-    st.write(f"**{len(prospects)}** rows read.")
     c1, c2, c3 = st.columns(3)
     for col, stage in zip((c1, c2, c3), (1, 2, 3)):
         col.metric(labels[stage], len(buckets[stage]))
@@ -529,7 +789,16 @@ def main() -> None:
         label_visibility="collapsed",
     )
 
-    if stage == 1:
+    if uses_status:
+        flow = (seq.get("status_flow") or {}).get(str(stage), {})
+        needs = ", ".join(f"`{x}`" if x else "blank" for x in flow.get("from", [])) or "—"
+        sets = pd_lib.next_status(cfg, stage)
+        st.caption(
+            f"Rows whose **Status** is {needs}"
+            + (f", last contacted at least {wait_days} days ago" if stage > 1 else "")
+            + (f". Once drafted, their Status becomes `{sets}`." if sets else ".")
+        )
+    elif stage == 1:
         st.caption("People who haven't been emailed yet.")
     else:
         st.caption(
@@ -616,7 +885,9 @@ def main() -> None:
     if stage == 1:
         called_first = st.checkbox(
             "I tried phoning these people first",
-            value=bool(cfg["sender"].get("mention_prior_call")),
+            value=bool(
+                wf.get("called_first_default") or cfg["sender"].get("mention_prior_call")
+            ),
             help=(
                 "The first email can mention that you tried to call. Only tick this if you "
                 "actually did — otherwise the sentence is left out."
@@ -655,6 +926,10 @@ def main() -> None:
                 "note": out["personalisation_note"], "researched": len(research) >= 200,
                 "ai_ok": ai_ok, "warnings": warns, "approved": True,
                 "touches_after": p.touches + 1,
+                # For the Cold Call Status write-back.
+                "row": p.row,
+                "next_status": pd_lib.next_status(cfg, stage),
+                "needs_first_date": p.first_contact is None,
             })
             if i < len(queue):
                 time.sleep(float(cfg["ai"]["delay_seconds"]))
@@ -662,6 +937,7 @@ def main() -> None:
         st.session_state["drafts"] = drafts
         st.session_state["stage"] = stage
         st.session_state["source_path"] = str(path)
+        st.session_state["drafted_workflow"] = workflow
 
     drafts = st.session_state.get("drafts")
     if not drafts:
@@ -673,6 +949,12 @@ def main() -> None:
             f"The drafts below are the **{labels[drafted_stage].lower()}**. Click the button "
             "above to write drafts for the stage you just selected."
         )
+
+    # The sign-off follows the stage where the workflow defines one, because approved copy does
+    # not sign off the same way throughout a sequence. Anything typed into the sidebar wins.
+    typed = (st.session_state.get("sender_signature_html") or "").strip()
+    if not typed or typed == (load_config()["sender"].get("signature_html") or "").strip():
+        cfg["sender"]["signature_html"] = pd_lib.stage_signature(cfg, drafted_stage)
 
     # ---- Step 4: review -----------------------------------------------------
     st.header("4. Read them")
@@ -758,16 +1040,39 @@ def main() -> None:
         "This records who you just handled and when, which is what makes the follow-ups "
         "work later."
     )
-    updates = {d["to"].lower(): {"touches": d["touches_after"], "date": today} for d in approved}
     onedrive_source = st.session_state.get("onedrive_source")
+    source_path = Path(st.session_state["source_path"])
 
-    try:
-        updated_bytes = spreadsheet_with_progress(
-            Path(st.session_state["source_path"]), updates, cfg
+    if patch_writeback:
+        next_stat = pd_lib.next_status(cfg, drafted_stage)
+        st.write(
+            f"Sets **Status** to `{next_stat}` and updates the contact dates for the "
+            f"**{len(approved)}** rows below. Everything else in the workbook is left "
+            "exactly as it is."
+            if next_stat else
+            f"Updates the contact dates for the **{len(approved)}** rows below."
         )
-    except Exception as exc:  # noqa: BLE001
-        updated_bytes = None
-        st.caption(f"(Could not build the updated spreadsheet: {exc})")
+        with st.expander("Which rows change"):
+            for d in approved:
+                bits = [f"Status → `{next_stat}`"] if next_stat else []
+                if d.get("needs_first_date"):
+                    bits.append("First Contact Date set")
+                bits.append(f"Last Contact Date → {today:%Y-%m-%d}")
+                st.write(f"- Row {d['row']} · **{d['company'] or d['to']}** — " + ", ".join(bits))
+        try:
+            updated_bytes = status_writeback(source_path, approved, cfg, today)
+        except Exception as exc:  # noqa: BLE001
+            updated_bytes = None
+            st.error(f"Could not prepare the update: {exc}")
+    else:
+        updates = {
+            d["to"].lower(): {"touches": d["touches_after"], "date": today} for d in approved
+        }
+        try:
+            updated_bytes = spreadsheet_with_progress(source_path, updates, cfg)
+        except Exception as exc:  # noqa: BLE001
+            updated_bytes = None
+            st.caption(f"(Could not build the updated spreadsheet: {exc})")
 
     if updated_bytes is not None and onedrive_source:
         if st.button("Save back to OneDrive", type="primary", use_container_width=True):
@@ -782,10 +1087,11 @@ def main() -> None:
         st.caption("Or keep a local copy too:")
 
     if updated_bytes is not None:
+        stem = source_path.stem if patch_writeback else "prospects"
         st.download_button(
             "Download updated spreadsheet",
             data=updated_bytes,
-            file_name=f"prospects_updated_{today:%Y-%m-%d}.xlsx",
+            file_name=f"{stem}_updated_{today:%Y-%m-%d}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )

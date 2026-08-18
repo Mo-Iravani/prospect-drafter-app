@@ -82,6 +82,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "linkedin": "LinkedIn URL",
             "notes": "Notes",
             "status": "Status",
+            # Cold Call only: the score column the user filters on.
+            "fit_score": "",
             # Owned by the tool, not by you. Created automatically if absent.
             "touches": "Touches",
             "first_contact_date": "First Contact Date",
@@ -96,8 +98,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         ],
         # Kept for the single-shot CLI: statuses that mean "already handled".
         "skip_when_status_in": ["drafted", "sent", "skip", "do not contact"],
+        # {exact column header: [values that mean "never contact this row"]}. The column
+        # must also be listed in context_columns so it gets read.
+        "skip_when": {},
+        # Phrases that mean "stop", matched anywhere in Status rather than at the start.
+        # For sheets whose Status holds free-text judgement notes.
+        "stop_contains": [],
+        # {"1": [phrases meaning one email has gone], "2": [...]}, matched anywhere in
+        # Status. Only consulted when there is no Touches column value on the row.
+        "touch_patterns": {},
     },
     "sequence": {
+        # How the app decides which email a prospect is due.
+        #   "touches" - count the emails already sent, from a Touches column
+        #   "status"  - read the stage straight off the Status column, via status_flow
+        "gate": "touches",
         # Days that must pass since the last contact before a follow-up is offered.
         "wait_days": 7,
         # Stage number -> template file. Stage 1 is the first email.
@@ -189,6 +204,7 @@ class Prospect:
     linkedin: str = ""
     notes: str = ""
     status: str = ""
+    fit_score: str = ""
     context: dict[str, str] = field(default_factory=dict)
     touches: int = 0
     first_contact: date | None = None
@@ -234,7 +250,9 @@ def read_prospects(cfg: dict) -> list[Prospect]:
         return _read_csv(path, sc)
 
     wb = load_workbook(path, data_only=True, read_only=True)
-    ws = wb[sc["sheet_name"]] if sc.get("sheet_name") else wb[wb.sheetnames[0]]
+    # Never a bare wb[name]: a configured sheet that is missing from this particular file
+    # would raise KeyError, which is a crash rather than an explanation.
+    ws = wb[resolve_sheet_name(list(wb.sheetnames), sc.get("sheet_name"))]
 
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
@@ -249,7 +267,8 @@ def read_prospects(cfg: dict) -> list[Prospect]:
         if raw is None or all(c is None or str(c).strip() == "" for c in raw):
             continue
         prospects.append(
-            _build_prospect(raw, lookup, sc["columns"], offset, sc.get("context_columns", []))
+            _build_prospect(raw, lookup, sc["columns"], offset, sc.get("context_columns", []),
+                            sc.get("touch_patterns"))
         )
     return prospects
 
@@ -266,13 +285,15 @@ def _read_csv(path: Path, sc: dict) -> list[Prospect]:
         if not any(str(c).strip() for c in raw):
             continue
         out.append(
-            _build_prospect(raw, lookup, sc["columns"], offset, sc.get("context_columns", []))
+            _build_prospect(raw, lookup, sc["columns"], offset, sc.get("context_columns", []),
+                            sc.get("touch_patterns"))
         )
     return out
 
 
 def _build_prospect(
-    raw, lookup: dict, colmap: dict, row_no: int, context_columns: list[str] | None = None
+    raw, lookup: dict, colmap: dict, row_no: int, context_columns: list[str] | None = None,
+    touch_patterns: dict | None = None,
 ) -> Prospect:
     def by_header(header: str) -> str:
         header = str(header or "").strip().lower()
@@ -294,17 +315,7 @@ def _build_prospect(
             context[str(header).strip()] = v
 
     status = val("status")
-
-    touches_raw = by_header(colmap.get("touches")).strip()
-    try:
-        touches = int(float(touches_raw)) if touches_raw else 0
-    except ValueError:
-        touches = 0
-    # Migration: sheets written by an earlier version recorded the first touch in
-    # Status ("Drafted 17 Aug 2026") with no Touches column. Treat that as one touch
-    # so those prospects are not emailed the first email a second time.
-    if touches == 0 and re.match(r"^(drafted|sent|contacted)", status.strip().lower()):
-        touches = 1
+    touches = infer_touches(status, by_header(colmap.get("touches")), touch_patterns)
 
     return Prospect(
         context=context,
@@ -321,6 +332,7 @@ def _build_prospect(
         linkedin=val("linkedin"),
         notes=val("notes"),
         status=status,
+        fit_score=normalise_score(val("fit_score")),
     )
 
 
@@ -517,6 +529,149 @@ def build_user_prompt(p: Prospect, research: str) -> str:
     return "\n".join(lines)
 
 
+# Closing words the templates' approved copy ends on. Checked against the whole trailing
+# paragraph, not just its first word, so "Best Regards, Tooka" matches as one unit.
+SIGNOFF_WORDS = frozenset({
+    "best regards", "kind regards", "warm regards", "warmest regards", "regards",
+    "many thanks", "best wishes", "best", "sincerely", "yours sincerely", "yours faithfully",
+    "warmly", "thank you", "thanks",
+})
+
+
+def _is_signoff_line(text: str) -> bool:
+    plain = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"[.,\s]+$", "", plain).strip().lower() in SIGNOFF_WORDS
+
+
+def strip_signoff_html(body_html: str) -> str:
+    """Drop a trailing sign-off paragraph the AI wrote into the body.
+
+    Every template's approved copy ends with its own "Best regards, Tooka" as literal text,
+    and the system prompt separately tells the AI not to include one because a signature is
+    appended by the caller afterwards. In practice the AI keeps its own sign-off more often
+    than not - about 5 times in 6 in a sample - because "follow the template's structure
+    closely" wins out over "no signature". Left alone, every one of those emails would read
+    "Best Regards, Tooka" twice. This is checked at the one point every caller passes
+    through, so nothing downstream has to remember to do it.
+
+    Handles the shape seen in practice - "<p>Best Regards,<br>Tooka</p>" as one paragraph -
+    and the two-paragraph variant, "<p>Best regards,</p><p>Tooka</p>", in case the model
+    formats it differently on another run.
+    """
+    text = (body_html or "").rstrip()
+    paras = list(re.finditer(r"<p>(.*?)</p>", text, re.I | re.S))
+    if not paras:
+        return text
+
+    last = paras[-1]
+    lines = [l.strip() for l in re.split(r"<br\s*/?>", last.group(1), flags=re.I) if l.strip()]
+    if lines and len(lines) <= 2 and _is_signoff_line(lines[0]):
+        return text[: last.start()].rstrip()
+
+    if len(paras) >= 2 and len(lines) == 1:
+        name = re.sub(r"<[^>]+>", "", last.group(1)).strip()
+        name_like = bool(name) and len(name.split()) <= 3 and not name.endswith((".", "?", "!"))
+        prev_lines = [l.strip() for l in re.split(r"<br\s*/?>", paras[-2].group(1), flags=re.I)
+                      if l.strip()]
+        if name_like and len(prev_lines) == 1 and _is_signoff_line(prev_lines[0]):
+            return text[: paras[-2].start()].rstrip()
+
+    return text
+
+
+def check_ai_key(key: str, model: str = "", base_url: str | None = None,
+                 timeout: int = 10) -> dict:
+    """Live check that an AI key actually authenticates, and that the model works.
+
+    A key's shape proves nothing on its own: this app once flagged a real, working key as
+    invalid purely because it didn't start with "AIza", when plenty of valid Gemini keys
+    don't. The only way to know a key is good is to ask Google. This calls GET /models,
+    which needs no generation quota, so it is safe to run every time the app opens.
+
+    Returns {"ok": True/False/None, "reason": str, "message": str}. `ok` is None when the
+    check itself could not be completed - a network problem, or Google rate-limiting the
+    check - which is deliberately distinct from the key being bad, and callers should say
+    so rather than treating "couldn't check" as "broken".
+    """
+    key = (key or "").strip()
+    if not key:
+        return {"ok": False, "reason": "missing", "message": "No AI key is set."}
+
+    url = f"{base_url or GEMINI_BASE}/models"
+    try:
+        r = requests.get(url, headers={"x-goog-api-key": key}, timeout=timeout)
+    except requests.exceptions.RequestException as exc:
+        return {
+            "ok": None, "reason": "network",
+            "message": f"Could not reach Google to check the key ({exc.__class__.__name__}).",
+        }
+
+    if r.status_code == 429:
+        return {
+            "ok": None, "reason": "rate_limited",
+            "message": "Google rate-limited the check just now. The key is probably fine.",
+        }
+
+    if r.status_code != 200:
+        # Google does not use HTTP status codes consistently for this: a malformed key comes
+        # back as 400 API_KEY_INVALID, while a well-formed key of the wrong credential type
+        # (an OAuth-style token passed as an API key, which is exactly what happened here
+        # once already) comes back as 401 ACCESS_TOKEN_TYPE_UNSUPPORTED. Reading the error
+        # body's own reason catches both, rather than guessing from the status code alone.
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        details = {
+            d.get("reason", "") for d in err.get("details", []) if isinstance(d, dict)
+        }
+        auth_failure = (
+            err.get("status") in ("UNAUTHENTICATED", "PERMISSION_DENIED")
+            or details & {
+                "API_KEY_INVALID", "ACCESS_TOKEN_TYPE_UNSUPPORTED",
+                "API_KEY_SERVICE_BLOCKED", "API_KEY_HTTP_REFERRER_BLOCKED",
+            }
+            or r.status_code in (401, 403)
+        )
+        if auth_failure:
+            why = err.get("message", "").strip()
+            return {
+                "ok": False, "reason": "rejected",
+                "message": (
+                    f"Google rejected this key ({why})." if why else "Google rejected this key."
+                ) + " Get a fresh one at https://aistudio.google.com/apikey",
+            }
+        return {
+            "ok": None, "reason": "unexpected",
+            "message": f"Unexpected response checking the key (HTTP {r.status_code}).",
+        }
+
+    try:
+        models = r.json().get("models", [])
+    except ValueError:
+        return {"ok": None, "reason": "unexpected",
+                "message": "Google's response could not be read."}
+
+    if not model:
+        return {"ok": True, "reason": "ok", "message": "The AI key is active."}
+
+    entry = next(
+        (m for m in models if m.get("name", "").removeprefix("models/") == model), None
+    )
+    if entry is None:
+        return {
+            "ok": False, "reason": "model_missing",
+            "message": f"The key works, but the model '{model}' isn't available to it.",
+        }
+    if "generateContent" not in entry.get("supportedGenerationMethods", []):
+        return {
+            "ok": False, "reason": "model_unsupported",
+            "message": f"The key works, but '{model}' doesn't support generating text.",
+        }
+    return {"ok": True, "reason": "ok",
+            "message": f"The AI key is active and '{model}' is available."}
+
+
 def call_gemini(cfg: dict, system_prompt: str, user_prompt: str) -> dict[str, str]:
     ai = cfg["ai"]
     key = os.environ.get(ai["api_key_env"], "").strip()
@@ -566,7 +721,7 @@ def call_gemini(cfg: dict, system_prompt: str, user_prompt: str) -> dict[str, st
     parsed = json.loads(text)
     return {
         "subject": str(parsed.get("subject", "")).strip(),
-        "body_html": str(parsed.get("body_html", "")).strip(),
+        "body_html": strip_signoff_html(str(parsed.get("body_html", "")).strip()),
         "personalisation_note": str(parsed.get("personalisation_note", "")).strip(),
     }
 
@@ -586,6 +741,33 @@ def list_models(cfg: dict) -> None:
     print("\nSet the one you want as ai.model in your config.")
 
 
+def template_copy_block(template: str) -> str:
+    """Just the email copy out of a template file, without the notes written for the AI.
+
+    A template is two things in one file: the approved copy, and the guidance explaining how
+    to fill it in. Only the copy belongs in an email. The copy is the section fenced by "---"
+    lines; anything before the first fence and after the second is guidance. Without this,
+    the no-AI fallback pastes the whole instruction file into the draft.
+    """
+    parts = re.split(r"(?m)^\s*-{3,}\s*$", template)
+    block = parts[1] if len(parts) >= 2 else template
+    # Drop the "APPROVED COPY - follow this closely:" style heading that opens the section.
+    block = re.sub(
+        r"(?is)^\s*(approved|suggested)\s+copy\b[^\n]*\n", "", block.strip(), count=1
+    )
+    return re.sub(r"\n{3,}", "\n\n", block).strip()
+
+
+def strip_ai_instructions(text: str) -> str:
+    """Replace the long bracketed passages written for the AI with a visible gap marker.
+
+    Run this only after short placeholders like [COMPANY] have been substituted: an
+    instruction block that still contains one would be nested brackets, which this
+    deliberately simple pattern will not match.
+    """
+    return re.sub(r"\[[^\[\]]{40,}\]", "[FILL THIS IN]", text, flags=re.S)
+
+
 def fallback_fill(template: str, p: Prospect, cfg: dict) -> dict[str, str]:
     """Template-only fill, used when the AI step fails."""
     s = cfg["sender"]
@@ -598,11 +780,24 @@ def fallback_fill(template: str, p: Prospect, cfg: dict) -> dict[str, str]:
         "your_name": s["your_name"],
         "your_company": s["your_company"],
     }
-    body = template
+    body = template_copy_block(template)
     for k, v in mapping.items():
         body = body.replace("{{" + k + "}}", v)
     body = re.sub(r"\{\{[^}]+\}\}", "", body)
-    paragraphs = [f"<p>{escape_html(x.strip())}</p>" for x in body.split("\n\n") if x.strip()]
+    # Templates write the company as [COMPANY] in prose the AI is meant to adapt. Substitute it
+    # before stripping instructions, so a block containing it is no longer nested brackets.
+    body = re.sub(r"\[COMPANY\]", p.company or "your firm", body, flags=re.I)
+    body = strip_ai_instructions(body)
+    # A stage's sign-off is appended separately, so drop it from the body.
+    body = re.sub(
+        r"(?is)\n\s*(best regards|kind regards|regards)\s*,?\s*\n.*$", "", body
+    ).strip()
+    # Templates are hard-wrapped for reading. Unwrap inside a paragraph, or the line breaks
+    # land mid-sentence in the email.
+    paragraphs = [
+        f"<p>{escape_html(re.sub(r'[ \t]*\n[ \t]*', ' ', x.strip()))}</p>"
+        for x in body.split("\n\n") if x.strip()
+    ]
     return {
         "subject": f"{s['your_company']} <> {p.company}".strip(" <>"),
         "body_html": "\n".join(paragraphs),
@@ -923,6 +1118,170 @@ def parse_date(value) -> date | None:
         return None
 
 
+def find_sheet(names: list[str], want: str | None) -> str | None:
+    """The real sheet name matching `want`, or None.
+
+    Case- and whitespace-insensitive: a sheet renamed by hand often picks up a trailing
+    space, and "First Contact Date " should still match "First Contact Date".
+    """
+    if not want:
+        return None
+    key = re.sub(r"\s+", " ", str(want)).strip().lower()
+    for n in names:
+        if re.sub(r"\s+", " ", str(n)).strip().lower() == key:
+            return n
+    return None
+
+
+def resolve_sheet_name(names: list[str], want: str | None, active: str | None = None) -> str:
+    """Which sheet to actually read, given the one the workflow asks for.
+
+    Order of preference: the sheet the workflow is configured for, then whichever sheet
+    Excel had active when the file was saved, then the first one.
+    """
+    if not names:
+        raise ValueError("This workbook has no sheets.")
+    return find_sheet(names, want) or find_sheet(names, active) or names[0]
+
+
+def infer_touches(status: str, explicit: str, patterns: dict | None) -> int:
+    """How many emails this person has already had.
+
+    `explicit` is the Touches column, which is authoritative when present. Some sheets do
+    not have one and record contact as free text in Status instead - "Email sent - Linkedin
+    Sent". `patterns` maps a touch count to the phrases that imply it, matched anywhere in
+    the status rather than only at the start, and the highest matching count wins. Without
+    this, a sheet full of "Email sent" rows reads as nobody having been contacted, and the
+    whole list gets queued for a first email it has already had.
+    """
+    raw = (explicit or "").strip()
+    if raw:
+        try:
+            return int(float(raw))
+        except ValueError:
+            pass
+
+    s = re.sub(r"\s+", " ", (status or "").strip().lower())
+    if not s:
+        return 0
+
+    best = 0
+    for count, phrases in (patterns or {}).items():
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            continue
+        if n <= best:
+            continue
+        if any(re.sub(r"\s+", " ", str(p).strip().lower()) in s for p in phrases):
+            best = n
+    if best:
+        return best
+
+    # Long-standing fallback: sheets written by an earlier version of this tool recorded the
+    # first touch as "Drafted 17 Aug 2026" in Status.
+    return 1 if re.match(r"^(drafted|sent|contacted)", s) else 0
+
+
+def stop_reason(status: str, sc: dict) -> str:
+    """Why this row should never be contacted, or "" if it is fine.
+
+    Two mechanisms, because sheets record this two ways. `stop_statuses` matches the start
+    of a controlled value ("Replied - Positive"). `stop_contains` matches anywhere, for
+    free-text judgement notes like "Email sent - Family Portraits - too small".
+    """
+    s = re.sub(r"\s+", " ", (status or "").strip().lower())
+    if not s:
+        return ""
+    if should_skip_status(status, sc.get("stop_statuses", [])):
+        return f"status is '{status.strip()}'"
+    for phrase in sc.get("stop_contains", []) or []:
+        p = re.sub(r"\s+", " ", str(phrase).strip().lower())
+        if p and p in s:
+            return f"status says '{phrase}'"
+    return ""
+
+
+def normalise_score(value) -> str:
+    """Fit scores arrive from Excel as 4, 4.0 or "4". Reduce them all to "4"."""
+    s = str(value if value is not None else "").strip()
+    if not s:
+        return ""
+    try:
+        f = float(s)
+    except ValueError:
+        return s
+    return str(int(f)) if f.is_integer() else str(f)
+
+
+def normalise_status(value) -> str:
+    """Case- and whitespace-insensitive form of a status, for comparing against config."""
+    return re.sub(r"\s+", " ", str(value if value is not None else "").strip()).lower()
+
+
+def blocked_by_column(p: "Prospect", sc: dict) -> str:
+    """Reason this row is off limits because of another column, or "" if it is fine.
+
+    Configured as spreadsheet.skip_when, e.g. {"Interested?": ["NO"]}. The cold database
+    uses this: a row can be marked "Interested? = NO" while its Status still reads
+    "First Contact", and without this check the follow-ups would keep going out to
+    someone who has already said no.
+    """
+    for header, values in (sc.get("skip_when") or {}).items():
+        actual = normalise_status(p.context.get(str(header).strip(), ""))
+        if actual and actual in {normalise_status(v) for v in values}:
+            return f"{header} is '{p.context.get(str(header).strip())}'"
+    return ""
+
+
+def _wait_gate(p: "Prospect", cfg: dict, today: date, require_date: bool) -> tuple[bool, str]:
+    wait = int(cfg.get("sequence", {}).get("wait_days", 7))
+    last = p.latest_contact
+    if last is None:
+        # Status-gated rows are trusted: the Status column already says the previous email
+        # went out, so a missing date is a gap in the sheet rather than a reason to skip.
+        return (False, "no contact date recorded") if require_date else (True, "")
+    waited = (today - last).days
+    if waited < wait:
+        return False, f"only {waited} day(s) since last contact (needs {wait})"
+    return True, ""
+
+
+def eligible_by_status(
+    p: "Prospect", stage: int, cfg: dict, today: date | None = None
+) -> tuple[bool, str]:
+    """Status-column version of the stage gate, used by the Cold Call workflow.
+
+    The Status column is the single source of truth for where a prospect is in the
+    sequence: blank means nobody has written yet, "First Contact" means email 1 has gone,
+    and so on. `sequence.status_flow` holds that mapping.
+    """
+    today = today or date.today()
+    sc = cfg["spreadsheet"]
+    seq = cfg.get("sequence", {})
+
+    if not p.email:
+        return False, "no email address"
+    if reason := stop_reason(p.status, sc):
+        return False, f"{reason} — this row is closed"
+    if blocker := blocked_by_column(p, sc):
+        return False, blocker
+
+    flow = (seq.get("status_flow") or {}).get(str(stage))
+    if not flow:
+        return False, f"no status rule is configured for email {stage}"
+
+    allowed = {normalise_status(x) for x in flow.get("from", [])}
+    if normalise_status(p.status) not in allowed:
+        shown = ", ".join(f"'{x}'" if x else "blank" for x in flow.get("from", []))
+        current = f"'{p.status}'" if p.status else "blank"
+        return False, f"status is {current} — email {stage} needs {shown}"
+
+    if stage > 1:
+        return _wait_gate(p, cfg, today, require_date=False)
+    return True, ""
+
+
 def eligible_for_stage(
     p: "Prospect", stage: int, cfg: dict, today: date | None = None
 ) -> tuple[bool, str]:
@@ -930,23 +1289,91 @@ def eligible_for_stage(
     today = today or date.today()
     sc = cfg["spreadsheet"]
 
+    if str(cfg.get("sequence", {}).get("gate", "touches")).lower() == "status":
+        return eligible_by_status(p, stage, cfg, today)
+
     if not p.email:
         return False, "no email address"
-    if should_skip_status(p.status, sc.get("stop_statuses", [])):
-        return False, f"status is '{p.status}'"
+    if reason := stop_reason(p.status, sc):
+        return False, reason
+    if blocker := blocked_by_column(p, sc):
+        return False, blocker
     if p.touches != stage - 1:
         if p.touches >= stage:
             return False, f"already had {p.touches} email(s)"
         return False, f"only {p.touches} email(s) so far — not ready for number {stage}"
     if stage > 1:
-        wait = int(cfg.get("sequence", {}).get("wait_days", 7))
-        last = p.latest_contact
-        if last is None:
-            return False, "no contact date recorded"
-        waited = (today - last).days
-        if waited < wait:
-            return False, f"only {waited} day(s) since last contact (needs {wait})"
+        return _wait_gate(p, cfg, today, require_date=True)
     return True, ""
+
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+def workflow_names(cfg: dict) -> list[str]:
+    """Configured workflow keys, with the default one first."""
+    names = list((cfg.get("workflows") or {}).keys())
+    default = cfg.get("default_workflow")
+    if default in names:
+        names.remove(default)
+        names.insert(0, default)
+    return names
+
+
+def workflow_label(cfg: dict, name: str) -> str:
+    return ((cfg.get("workflows") or {}).get(name) or {}).get("label", name)
+
+
+def apply_workflow(cfg: dict, name: str) -> dict:
+    """Return `cfg` with the named workflow's settings merged over the top.
+
+    Each workflow block is an overlay on the shared config, so anything it does not
+    mention - the sender details, the AI settings, the Outlook setup - stays as it is.
+    The workflow's own metadata is kept under cfg["workflow"] for the app to read.
+    """
+    block = dict(((cfg.get("workflows") or {}).get(name) or {}))
+    if not block:
+        return cfg
+    overlay = {k: v for k, v in block.items()
+               if k not in ("label", "blurb", "fit_score", "writeback",
+                            "called_first_default")}
+    merged = deep_merge(cfg, overlay)
+    merged["workflow"] = {
+        "name": name,
+        "label": block.get("label", name),
+        "blurb": block.get("blurb", ""),
+        "fit_score": block.get("fit_score") or {},
+        "writeback": block.get("writeback") or {},
+        "called_first_default": bool(block.get("called_first_default", False)),
+    }
+    return merged
+
+
+def next_status(cfg: dict, stage: int) -> str:
+    """The Status value to write once email `stage` has been drafted."""
+    flow = (cfg.get("sequence", {}).get("status_flow") or {}).get(str(stage)) or {}
+    return str(flow.get("to") or "").strip()
+
+
+def fit_score_values(prospects: list["Prospect"], cfg: dict) -> list[str]:
+    """Scores actually present in the sheet, ordered the way the config lists them."""
+    present = {p.fit_score for p in prospects if p.fit_score}
+    ordered = [s for s in (cfg.get("workflow", {}).get("fit_score", {}).get("options") or [])
+               if s in present]
+    return ordered + sorted(present - set(ordered))
+
+
+def stage_signature(cfg: dict, stage: int) -> str:
+    """The sign-off for this stage.
+
+    Approved copy does not use the same sign-off throughout a sequence: the cold first email
+    ends "Best Regards" and the follow-ups end "Kind regards". Where a workflow sets
+    sequence.signatures, the stage wins; otherwise this is the sender's single signature and
+    nothing changes.
+    """
+    sigs = cfg.get("sequence", {}).get("signatures") or {}
+    return str(sigs.get(str(stage)) or cfg.get("sender", {}).get("signature_html", ""))
 
 
 def stage_template_path(cfg: dict, stage: int, base_dir: Path | None = None) -> Path:
