@@ -93,6 +93,7 @@
     "token_cache": "review/.token_cache.json"
   },
   "sequence": {
+    "gate": "touches",
     "wait_days": 7,
     "templates": {
       "1": "template.md",
@@ -103,6 +104,146 @@
       "1": "First email",
       "2": "First follow-up",
       "3": "Second follow-up"
+    }
+  },
+  "default_workflow": "internal_lead",
+  "workflows": {
+    "internal_lead": {
+      "label": "Internal lead",
+      "blurb": "Leads that already had some contact with WLCC. Progress is tracked in a Touches column.",
+      "spreadsheet": {
+        "sheet_name": "Inbound Leads"
+      }
+    },
+    "cold_call": {
+      "label": "Cold Call",
+      "blurb": "Cold outreach from the WLCC cold database, chosen by WLCC Fit Score. Progress is tracked in the Status column.",
+      "called_first_default": false,
+      "ai": {
+        "max_words": 120,
+        "extra_rules": [
+          "Never invent facts about the prospect or their company.",
+          "Exactly one specific, verifiable observation about their business, and it must come from the research or the 'Why WLCC?' note.",
+          "The approved copy opens the second paragraph with 'I am particularly impressed by'. That is admiration pinned to a checkable fact, and it is wanted here. What is not wanted is empty flattery: never praise their website, their brand, their 'impressive growth' or anything you cannot point to in the research.",
+          "One clear ask at the end.",
+          "Do not use em-dashes.",
+          "Greeting is 'Dear [first name],' not 'Hi'.",
+          "Never claim WLCC does something not stated in the sender description.",
+          "Never suggest the prospect contacted WLCC, enquired, was referred, or attended anything. This is a cold list."
+        ]
+      },
+      "fit_score": {
+        "label": "WLCC Fit Score",
+        "options": [
+          "5",
+          "4",
+          "3",
+          "2",
+          "1",
+          "0"
+        ],
+        "default": [
+          "5",
+          "4"
+        ]
+      },
+      "writeback": {
+        "mode": "patch",
+        "status_column": "A",
+        "first_contact_column": "D",
+        "last_contact_column": "E"
+      },
+      "spreadsheet": {
+        "sheet_name": "Cold Database in Work",
+        "header_row": 1,
+        "columns": {
+          "company": "Company Name",
+          "first_name": "First Name",
+          "last_name": "Last Name",
+          "job_title": "Job Title",
+          "email": "Email Address",
+          "website": "Website",
+          "linkedin": "Person's LinkedIn",
+          "notes": "Additional Notes",
+          "status": "Status",
+          "fit_score": "WLCC Fit Score",
+          "touches": "",
+          "first_contact_date": "First Contact Date",
+          "last_contact_date": "Last Contact Date"
+        },
+        "context_columns": [
+          "Why WLCC?",
+          "Region",
+          "Country",
+          "Industry",
+          "Call Result",
+          "Interested?",
+          "Pre-Sales Manager"
+        ],
+        "stop_statuses": [
+          "replied",
+          "not a fit",
+          "moved to active",
+          "no response",
+          "follow-up 3 sent"
+        ],
+        "skip_when": {
+          "Interested?": [
+            "NO"
+          ]
+        }
+      },
+      "sequence": {
+        "gate": "status",
+        "wait_days": 7,
+        "templates": {
+          "1": "cold_template.md",
+          "2": "cold_template_2.md",
+          "3": "cold_template_3.md"
+        },
+        "labels": {
+          "1": "First email",
+          "2": "Second email",
+          "3": "Third email"
+        },
+        "signatures": {
+          "1": "<p>Best Regards,<br>Tooka</p>",
+          "2": "<p>Kind regards,<br>Tooka</p>",
+          "3": "<p>Kind regards,<br>Tooka</p>"
+        },
+        "status_flow": {
+          "1": {
+            "from": [
+              ""
+            ],
+            "to": "First Contact"
+          },
+          "2": {
+            "from": [
+              "First Contact"
+            ],
+            "to": "Follow-up 1 Sent"
+          },
+          "3": {
+            "from": [
+              "Follow-up 1 Sent"
+            ],
+            "to": "Follow-up 2 Sent"
+          }
+        },
+        "status_options": [
+          "First Contact",
+          "Follow-up 1 Sent",
+          "Follow-up 2 Sent",
+          "Follow-up 3 Sent (Final)",
+          "Replied – Positive",
+          "Replied – Neutral",
+          "Replied – Negative",
+          "No Response",
+          "Not a Fit",
+          "Moved to Active"
+        ]
+      }
     }
   }
 }

@@ -21,6 +21,40 @@ Two constraints worth knowing before you start:
 
 ---
 
+## Running it on your own machine
+
+Double-click **`run-local.cmd`** in the project folder — the one above `prospect-drafter-app`.
+It opens the app at http://localhost:8501. Leave the black window open while you work; closing
+it stops the app.
+
+The first run builds a virtual environment in `prospect-drafter-app\.venv` and installs the
+requirements, which takes a minute. After that, start-up is immediate: it checks the
+environment by importing the packages rather than reinstalling them.
+
+It also checks `.streamlit\secrets.toml` before starting, and warns you if the
+`GEMINI_API_KEY` doesn't look like a Gemini key. Those begin with `AIza`. Without a working
+key the app still reads websites and produces drafts, but they come out as the plain template
+with `[FILL THIS IN]` gaps rather than written emails. Note that the app's own sidebar only
+checks the key is *present*, not that it works — so trust the launcher's warning over the
+"AI key configured ✓" line.
+
+If the environment ever gets into a bad state, delete `prospect-drafter-app\.venv` and run the
+launcher again. It rebuilds from scratch. One thing worth knowing: a folder in `.venv` with no
+`__init__.py` imports as an empty namespace package, so a half-copied environment can pass a
+naive `import streamlit` check while having nothing in it. That's why the launcher imports
+`streamlit.web.cli` — the module that actually runs the app — instead.
+
+To run it from a terminal instead:
+
+```bash
+cd prospect-drafter-app && .venv/Scripts/python.exe -m streamlit run app.py
+```
+
+Local runs read the same `config.json` and templates as the deployed app, so this is the right
+place to try a template change before pushing it.
+
+---
+
 ## Step 1 — Put the code on GitHub
 
 1. Create a GitHub account if you don't have one: **https://github.com/signup**
