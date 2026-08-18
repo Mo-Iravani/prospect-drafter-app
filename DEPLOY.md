@@ -163,8 +163,8 @@ request hasn't been sent yet; this is here so the feature is ready the moment it
 
 What it adds once it's live: in Step 1 she can choose **Load from OneDrive**, paste a "Copy
 link" from her spreadsheet in OneDrive/Excel Online instead of uploading a file, and after
-drafting there's a **Save back to OneDrive** button that writes the updated `Touches` /
-`First Contact Date` / `Last Contact Date` columns straight back to that same file — no
+drafting there's a **Save back to OneDrive** button that writes the updated `Status` /
+`First Contact Date` / `Last Contact Date` cells straight back to that same file — no
 download/re-upload round trip. The **Download updated spreadsheet** button stays as a
 fallback either way.
 
@@ -230,20 +230,41 @@ Change the default in `config.json` under `sender.mention_prior_call`.
 
 ## How the app tracks who's due
 
-Three columns it owns, created automatically if your sheet doesn't have them:
+Both workflows are **status-driven** (`sequence.gate: "status"` in `config.json`). The sheet's
+own `Status` dropdown is the single source of truth for where a row is in the sequence, and
+`sequence.status_flow` maps it:
 
-- **`Touches`** — how many emails that person has had (0, 1, 2, 3)
-- **`First Contact Date`** / **`Last Contact Date`** — set when drafts are created
+| Status | Due | Written back as |
+|---|---|---|
+| blank | email 1 | `First Contact` |
+| `First Contact` | email 2 | `Follow-up 1 Sent` |
+| `Follow-up 1 Sent` | email 3 | `Follow-up 2 Sent` |
 
-The **`Status`** column stays yours. Anything starting with `Replied`, `Skip`, `Do not
-contact`, `Unsubscribed`, `Bounced`, `Customer`, `Won` or `Lost` takes that person out of the
-sequence permanently.
+Both sheets carry the same ten-value dropdown. `Replied – *`, `No Response`, `Not a Fit`,
+`Moved to Active` and `Follow-up 3 Sent (Final)` are listed in `stop_statuses` and take a row
+out permanently. `Follow-up 2 Sent` simply matches no stage, so it isn't offered again either.
 
-Sheets written by the earlier version — where Status read `Drafted 17 Aug 2026` and there was
-no Touches column — are handled: those rows count as one touch, so nobody gets the first email
-twice.
+Per workflow, `writeback` names the three cells to update:
+
+| Workflow | Sheet | Status | First contact | Last contact |
+|---|---|---|---|---|
+| `internal_lead` | `Inbound Leads` | C | D | E |
+| `cold_call` | `Cold Database in Work` | A | D | E |
+
+A `Touches` column is no longer used by either workflow, though the touches gate is still in
+the code (`sequence.gate: "touches"`) for any sheet that wants it.
+
+Adding a fourth email is a config change, not a code change: add a `status_flow` entry `"4"`
+going from `Follow-up 2 Sent` to `Follow-up 3 Sent (Final)`, a `templates` entry, a `labels`
+entry, and drop `follow-up 3 sent` from `stop_statuses`.
 
 Dates are read day-first (`01/08/2026` is 1 August), matching UK convention.
+
+**Write-back is surgical, not a re-save.** `xlsx_patch.py` edits only the target cells inside
+the one sheet's XML and copies every other part of the workbook through byte-identically. This
+matters: a plain openpyxl load/save of this master report silently drops the nine dropdowns on
+`WLCC Active Leads`, because they're stored as x14 extension validations that openpyxl doesn't
+support. Never swap this for `openpyxl.save()`.
 
 ## The reply check
 

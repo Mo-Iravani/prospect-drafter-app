@@ -109,10 +109,64 @@
   "default_workflow": "internal_lead",
   "workflows": {
     "internal_lead": {
-      "label": "Internal lead",
-      "blurb": "Leads that already had some contact with WLCC. Progress is tracked in a Touches column.",
+      "label": "In-bound Leads",
+      "blurb": "People who came to WLCC. Read from the Inbound Leads sheet, and progress is tracked in the Status column (column C) using the dropdown already in the sheet.",
+      "writeback": {
+        "mode": "patch",
+        "status_column": "C",
+        "first_contact_column": "D",
+        "last_contact_column": "E"
+      },
       "spreadsheet": {
-        "sheet_name": "Inbound Leads"
+        "sheet_name": "Inbound Leads",
+        "stop_statuses": [
+          "replied",
+          "not a fit",
+          "moved to active",
+          "no response",
+          "follow-up 3 sent"
+        ]
+      },
+      "sequence": {
+        "gate": "status",
+        "wait_days": 7,
+        "signatures": {
+          "1": "<p>Best regards,<br>Tooka</p>",
+          "2": "<p>Kind regards,<br>Tooka</p>",
+          "3": "<p>Kind regards,<br>Tooka</p>"
+        },
+        "status_flow": {
+          "1": {
+            "from": [
+              ""
+            ],
+            "to": "First Contact"
+          },
+          "2": {
+            "from": [
+              "First Contact"
+            ],
+            "to": "Follow-up 1 Sent"
+          },
+          "3": {
+            "from": [
+              "Follow-up 1 Sent"
+            ],
+            "to": "Follow-up 2 Sent"
+          }
+        },
+        "status_options": [
+          "First Contact",
+          "Follow-up 1 Sent",
+          "Follow-up 2 Sent",
+          "Follow-up 3 Sent (Final)",
+          "Replied – Positive",
+          "Replied – Neutral",
+          "Replied – Negative",
+          "No Response",
+          "Not a Fit",
+          "Moved to Active"
+        ]
       }
     },
     "cold_call": {

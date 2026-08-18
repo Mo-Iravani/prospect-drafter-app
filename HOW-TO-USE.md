@@ -10,19 +10,21 @@ before anything happens. **It never sends anything** — you always press Send y
 At the top of the page there are two buttons. Choose before you do anything else, because
 everything below changes with it.
 
-**Internal lead** — the one you've been using. Leads that have already had some contact with
-WLCC. The app works out who's due from a `Touches` count.
+**In-bound Leads** — people who came to WLCC. The app reads the **Inbound Leads** sheet and
+tracks progress in its **Status** column (column C).
 
-**Cold Call** — cold outreach from the WLCC master report. The app reads the
-**Cold Database in Work** sheet, you pick which **WLCC Fit Scores** to work, and it tracks
-progress in the **Status** column (column A) using the same dropdown values already in the
-sheet. The emails are written cold: they never claim the person contacted WLCC first.
+**Cold Call** — cold outreach. The app reads the **Cold Database in Work** sheet, you pick
+which **WLCC Fit Scores** to work first, and it tracks progress in that sheet's **Status**
+column (column A). The emails are written cold: they never claim the person contacted WLCC
+first.
 
-Both workflows read the same master report, just different sheets — so you upload the one
-file either way.
+Both read the same master report, just different sheets — so you upload the one file either
+way. Both now work identically: the Status dropdown is what tells the app which email is due,
+and the Status dropdown is what it updates afterwards. The only real differences are which
+sheet they read, and that Cold Call asks for a Fit Score first.
 
 If you switch workflow after writing drafts, the drafts are cleared. That's deliberate — it
-stops a Cold Call batch being recorded into an Internal lead sheet by mistake.
+stops one workflow's batch being recorded into the other's sheet by mistake.
 
 ---
 
@@ -48,10 +50,10 @@ Your file isn't changed. The app only reads it.
 Under the upload box the app shows the **Active sheet** — the one it is reading. It picks this
 for you from the workflow you chose:
 
-| Workflow | Sheet it reads |
-| --- | --- |
-| Internal lead | `Inbound Leads` |
-| Cold Call | `Cold Database in Work` |
+| Workflow | Sheet it reads | Status column |
+| --- | --- | --- |
+| In-bound Leads | `Inbound Leads` | C |
+| Cold Call | `Cold Database in Work` | A |
 
 Normally you can just glance at it and carry on. You only need to touch the dropdown if you
 keep that data on a differently named sheet, and if you do change it the app warns you, because
@@ -84,8 +86,9 @@ Three options, and the app tells you how many people are ready for each:
 - **Second follow-up** — same again, one step further along. This is the last one; nobody
   gets a fourth email.
 
-On **Cold Call** the three stages are just called First, Second and Third email, and they're
-worked out from the Status column instead:
+Both workflows work this out from the Status column. On **Cold Call** the three stages are
+called First, Second and Third email; on **In-bound Leads** they keep the names above. Either
+way the rule is the same:
 
 | Status now | Stage they're due | Status becomes |
 | --- | --- | --- |
@@ -95,8 +98,13 @@ worked out from the Status column instead:
 
 Anything else in that column means the app leaves the row alone: `Replied – Positive`,
 `Replied – Neutral`, `Replied – Negative`, `No Response`, `Not a Fit`, `Moved to Active`, and
-`Follow-up 3 Sent (Final)`. A row marked `Interested? = NO` is skipped too, whatever its
-Status says.
+`Follow-up 3 Sent (Final)`. Rows already at `Follow-up 2 Sent` have had all three emails, so
+they aren't offered again either. On Cold Call, a row marked `Interested? = NO` is skipped too,
+whatever its Status says.
+
+A blank Status is what makes a row due a *first* email. So if every row on a sheet already has
+a status, "First email" will show zero ready — that's correct, not a fault. New rows you add
+with a blank Status will appear there.
 
 You don't have to work out who's due. The app does that from your spreadsheet. If a stage
 shows zero, click **Why not?** and it explains each person's situation.
@@ -173,19 +181,15 @@ your own copy — this button is always there too, even when OneDrive is connect
 **This is the step that makes follow-ups work.** Without it, the app can't tell who's due a
 follow-up next week — and you risk sending someone the same first email twice.
 
-On **Internal lead** it records how many emails each person has had and the date, in three
-columns: `Touches`, `First Contact Date` and `Last Contact Date`. If you don't send a draft
-after all, set that person's `Touches` back down by one, or set their Status to `Skip`.
+In **both workflows** it moves each row's **Status** on one step and stamps the two date
+columns. Before you save, open **Which rows change** and check the list — it names every row
+number and company it's about to touch. If you don't send a draft after all, set that row's
+Status back to what it was.
 
-On **Cold Call** it moves each row's **Status** on one step and stamps the two date columns.
-Before you save, open **Which rows change** and check the list — it names every row number and
-company it's about to touch. If you don't send a draft after all, set that row's Status back to
-what it was.
-
-The Cold Call save is deliberately careful with the master report: it edits only those cells on
-the Cold Database sheet and leaves the rest of the workbook exactly as it was, so the dropdowns
-and the colour rules on the other sheets survive. Even so, keep your own copy the first time
-you use it.
+The save is deliberately careful with the master report: it edits only those few cells on the
+one sheet you were working, and leaves the rest of the workbook exactly as it was, so the
+dropdowns and the colour rules on the other sheets survive. Even so, keep your own copy the
+first time you use it.
 
 ---
 
@@ -200,10 +204,9 @@ one whose name is on the email.
 **If a draft mentions something that isn't true about that company**, untick it and tell Mo.
 That shouldn't happen and he'll want to know.
 
-**Status words the app respects.** On Internal lead, type any of these into the Status column
-and that person is left alone permanently: `Replied`, `Skip`, `Do not contact`, `Unsubscribed`,
-`Bounced`, `Customer`, `Won`, `Lost`. On Cold Call, use the dropdown already in column A — see
-the table in step 2. Either way, mark someone as replied the moment they answer.
+**Status words the app respects.** Use the dropdown already in the Status column — the same
+list on both sheets. See the table in step 2 for which value means what. Mark someone as
+replied the moment they answer, and the app will leave them alone from then on.
 
 **If you get an error**, take a screenshot and send it to Mo. Nothing you do in the app can
 break anything or send anything by accident.

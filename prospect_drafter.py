@@ -110,8 +110,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "sequence": {
         # How the app decides which email a prospect is due.
-        #   "touches" - count the emails already sent, from the Touches column (Internal lead)
-        #   "status"  - read the stage straight off the Status column (Cold Call)
+        #   "touches" - count the emails already sent, from a Touches column
+        #   "status"  - read the stage straight off the Status column, via status_flow
         "gate": "touches",
         # Days that must pass since the last contact before a follow-up is offered.
         "wait_days": 7,

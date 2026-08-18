@@ -5,13 +5,16 @@ Four steps: upload the list, pick which email in the sequence, read the drafts,
 put them in Outlook. Nothing is ever sent.
 
 Two workflows, chosen at the top of the page and configured under "workflows" in
-config.json:
+config.json. Both read the same WLCC master report, on different sheets, and both work
+the same way: which email is due is read off that sheet's Status column, and the Status
+column is what gets written back.
 
-    Internal lead  leads that already had contact with WLCC. Which email is due is
-                   worked out from a Touches count.
-    Cold Call      cold outreach from the "Cold Database in Work" sheet, picked by WLCC
-                   Fit Score. Which email is due is read off the Status column, and the
-                   Status column is what gets written back.
+    In-bound Leads  people who came to WLCC. Sheet "Inbound Leads", Status in column C.
+    Cold Call       cold outreach. Sheet "Cold Database in Work", Status in column A,
+                    and rows are picked by WLCC Fit Score first.
+
+Nothing here is workflow-specific in code: the sheet, the columns, the templates and
+whether there is a score to filter on all come from config.
 
 Sequence stages, in both workflows:
     1  first email
@@ -316,7 +319,7 @@ def fit_score_filter(prospects: list, cfg: dict) -> list:
     return kept
 
 
-def cold_call_edits(drafts: list[dict], cfg: dict, today: date) -> dict[int, dict[str, object]]:
+def status_writeback_edits(drafts: list[dict], cfg: dict, today: date) -> dict[int, dict[str, object]]:
     """The cell edits that record this batch: Status, and the two contact dates.
 
     Keyed by worksheet row rather than by email address, because the cold database has
@@ -342,7 +345,7 @@ def cold_call_edits(drafts: list[dict], cfg: dict, today: date) -> dict[int, dic
     return edits
 
 
-def cold_call_writeback(source: Path, drafts: list[dict], cfg: dict, today: date) -> bytes:
+def status_writeback(source: Path, drafts: list[dict], cfg: dict, today: date) -> bytes:
     """The workbook with this batch's Status and dates written in.
 
     Uses xlsx_patch rather than openpyxl on purpose. See that module's docstring: an
@@ -353,7 +356,7 @@ def cold_call_writeback(source: Path, drafts: list[dict], cfg: dict, today: date
         raise RuntimeError(
             "Writing the Status column back needs the Excel file itself (.xlsx), not a CSV."
         )
-    edits = cold_call_edits(drafts, cfg, today)
+    edits = status_writeback_edits(drafts, cfg, today)
     if not edits:
         raise RuntimeError("Nothing to write back.")
     return xlsx_patch.patch_workbook_bytes(
@@ -640,12 +643,21 @@ def main() -> None:
 
     cfg = get_config(workflow)
     wf = cfg.get("workflow", {})
-    is_cold = wf.get("name") == "cold_call"
+    # Branch on what a workflow *does*, not on which one it is. Both workflows are now
+    # status-driven against the same workbook, and the only differences left between them
+    # live in config: which sheet, which columns, whether there is a score to filter on.
+    seq_gate = str(cfg["sequence"].get("gate", "touches")).lower()
+    uses_status = seq_gate == "status"
+    has_fit_score = bool(wf.get("fit_score"))
+    patch_writeback = str((wf.get("writeback") or {}).get("mode", "")).lower() == "patch"
     if wf.get("blurb"):
         st.caption(wf["blurb"])
 
-    # Drafts belong to the workflow they were written for. Switching workflow clears them
-    # so a Cold Call batch can never be written back into an Internal lead sheet.
+    # Drafts belong to the workflow they were written for. Switching workflow clears them so
+    # a batch can never be written back through the other workflow's settings. This matters
+    # more now that both workflows patch the same workbook: they use different sheets and
+    # different Status columns (C vs A), so a mismatched write-back would put a status into
+    # the wrong column of the wrong sheet.
     if st.session_state.get("drafted_workflow") not in (None, workflow):
         for key in ("drafts", "stage", "source_path", "replied"):
             st.session_state.pop(key, None)
@@ -747,8 +759,8 @@ def main() -> None:
 
     st.write(f"**{len(prospects)}** rows read.")
 
-    # ---- Cold Call only: pick the fit scores to work -------------------------
-    if is_cold:
+    # ---- Pick the fit scores to work, where the sheet has them ---------------
+    if has_fit_score:
         prospects = fit_score_filter(prospects, cfg)
 
     today = date.today()
@@ -777,7 +789,7 @@ def main() -> None:
         label_visibility="collapsed",
     )
 
-    if is_cold:
+    if uses_status:
         flow = (seq.get("status_flow") or {}).get(str(stage), {})
         needs = ", ".join(f"`{x}`" if x else "blank" for x in flow.get("from", [])) or "—"
         sets = pd_lib.next_status(cfg, stage)
@@ -1031,7 +1043,7 @@ def main() -> None:
     onedrive_source = st.session_state.get("onedrive_source")
     source_path = Path(st.session_state["source_path"])
 
-    if is_cold:
+    if patch_writeback:
         next_stat = pd_lib.next_status(cfg, drafted_stage)
         st.write(
             f"Sets **Status** to `{next_stat}` and updates the contact dates for the "
@@ -1048,7 +1060,7 @@ def main() -> None:
                 bits.append(f"Last Contact Date → {today:%Y-%m-%d}")
                 st.write(f"- Row {d['row']} · **{d['company'] or d['to']}** — " + ", ".join(bits))
         try:
-            updated_bytes = cold_call_writeback(source_path, approved, cfg, today)
+            updated_bytes = status_writeback(source_path, approved, cfg, today)
         except Exception as exc:  # noqa: BLE001
             updated_bytes = None
             st.error(f"Could not prepare the update: {exc}")
@@ -1075,7 +1087,7 @@ def main() -> None:
         st.caption("Or keep a local copy too:")
 
     if updated_bytes is not None:
-        stem = source_path.stem if is_cold else "prospects"
+        stem = source_path.stem if patch_writeback else "prospects"
         st.download_button(
             "Download updated spreadsheet",
             data=updated_bytes,
