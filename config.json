@@ -48,7 +48,7 @@
       "customer"
     ]
   },
-  "template_path": "template.md",
+  "template_path": "inbound_lead_first_contact.md",
   "sender": {
     "your_name": "Tooka",
     "your_title": "",
@@ -96,9 +96,9 @@
     "gate": "touches",
     "wait_days": 7,
     "templates": {
-      "1": "template.md",
-      "2": "template_followup_1.md",
-      "3": "template_followup_2.md"
+      "1": "inbound_lead_first_contact.md",
+      "2": "inbound_lead_first_followup.md",
+      "3": "inbound_lead_second_followup.md"
     },
     "labels": {
       "1": "First email",
@@ -166,6 +166,11 @@
           "No Response",
           "Not a Fit",
           "Moved to Active"
+        ],
+        "fixed_subject": "Reconnecting: World Luxury Chamber of Commerce",
+        "verbatim_stages": [
+          "2",
+          "3"
         ]
       }
     },
@@ -251,19 +256,22 @@
         "gate": "status",
         "wait_days": 7,
         "templates": {
-          "1": "cold_template.md",
-          "2": "cold_template_2.md",
-          "3": "cold_template_3.md"
+          "1": "coldcall_first_contact.md",
+          "2": "coldcall_first_followup.md",
+          "3": "coldcall_second_followup.md",
+          "4": "coldcall_third_followup.md"
         },
         "labels": {
           "1": "First email",
-          "2": "Second email",
-          "3": "Third email"
+          "2": "First follow-up",
+          "3": "Second follow-up",
+          "4": "Third follow-up"
         },
         "signatures": {
           "1": "<p>Best Regards,<br>Tooka</p>",
           "2": "<p>Kind regards,<br>Tooka</p>",
-          "3": "<p>Kind regards,<br>Tooka</p>"
+          "3": "<p>Kind regards,<br>Tooka</p>",
+          "4": "<p>Kind regards,<br>Tooka</p>"
         },
         "status_flow": {
           "1": {
@@ -283,6 +291,12 @@
               "Follow-up 1 Sent"
             ],
             "to": "Follow-up 2 Sent"
+          },
+          "4": {
+            "from": [
+              "Follow-up 2 Sent"
+            ],
+            "to": "Follow-up 3 Sent (Final)"
           }
         },
         "status_options": [
@@ -296,6 +310,12 @@
           "No Response",
           "Not a Fit",
           "Moved to Active"
+        ],
+        "fixed_subject": "Invitation: Joining the World Luxury Chamber of Commerce",
+        "verbatim_stages": [
+          "2",
+          "3",
+          "4"
         ]
       }
     }

@@ -763,10 +763,16 @@ def main() -> None:
     if has_fit_score:
         prospects = fit_score_filter(prospects, cfg)
 
+    # The number of stages is a config choice, not a fixed 3 - Cold Call now runs a fourth,
+    # final follow-up that Internal lead doesn't have. Everything below reads it from
+    # `labels` rather than assuming a count, so a workflow can add or drop a stage in
+    # config.json alone.
+    stages = sorted(labels)
+
     today = date.today()
     buckets: dict[int, list] = {}
     reasons: dict[int, list[tuple]] = {}
-    for stage in (1, 2, 3):
+    for stage in stages:
         ok, no = [], []
         for p in prospects:
             good, why = pd_lib.eligible_for_stage(p, stage, cfg, today)
@@ -774,8 +780,7 @@ def main() -> None:
         buckets[stage] = ok
         reasons[stage] = no
 
-    c1, c2, c3 = st.columns(3)
-    for col, stage in zip((c1, c2, c3), (1, 2, 3)):
+    for col, stage in zip(st.columns(len(stages)), stages):
         col.metric(labels[stage], len(buckets[stage]))
 
     # ---- Step 2: which email ------------------------------------------------
@@ -783,7 +788,7 @@ def main() -> None:
 
     stage = st.radio(
         "Stage",
-        options=[1, 2, 3],
+        options=stages,
         format_func=lambda s: f"{labels[s]} — {len(buckets[s])} ready",
         horizontal=True,
         label_visibility="collapsed",
@@ -906,12 +911,19 @@ def main() -> None:
         system_prompt = pd_lib.build_system_prompt(cfg, template, stage, called_first)
         os.environ["GEMINI_API_KEY"] = secret("GEMINI_API_KEY")
 
+        # Some stages send fixed, approved copy rather than an AI-adapted email — see
+        # is_verbatim_stage(). There's nothing for research to feed into on those stages, so
+        # skip the website fetch, and the "researched" flag would otherwise wrongly mark every
+        # one of these as needing a look even though nothing went wrong.
+        verbatim = pd_lib.is_verbatim_stage(cfg, stage)
+        fixed_subject = cfg["sequence"].get("fixed_subject")
+
         drafts = []
         bar = st.progress(0.0, text="Starting...")
         for i, p in enumerate(queue, 1):
             bar.progress((i - 1) / len(queue), text=f"{p.full_name or p.email} — {p.company}")
             research, warns = ("", [])
-            if p.website:
+            if p.website and not verbatim:
                 research, warns = pd_lib.fetch_site_text(p.website, cfg)
             try:
                 out = pd_lib.call_gemini(cfg, system_prompt, pd_lib.build_user_prompt(p, research))
@@ -922,8 +934,10 @@ def main() -> None:
                 ai_ok = False
             drafts.append({
                 "to": p.email, "name": p.full_name or p.email, "company": p.company,
-                "subject": out["subject"], "body": html_to_plain(out["body_html"]),
-                "note": out["personalisation_note"], "researched": len(research) >= 200,
+                "subject": fixed_subject or out["subject"],
+                "body": html_to_plain(out["body_html"]),
+                "note": out["personalisation_note"],
+                "researched": True if verbatim else len(research) >= 200,
                 "ai_ok": ai_ok, "warnings": warns, "approved": True,
                 "touches_after": p.touches + 1,
                 # For the Cold Call Status write-back.

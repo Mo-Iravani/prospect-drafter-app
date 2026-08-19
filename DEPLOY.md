@@ -68,15 +68,23 @@ place to try a template change before pushing it.
    ```
    app.py
    prospect_drafter.py
+   xlsx_patch.py
    config.json
-   template.md
-   template_followup_1.md
-   template_followup_2.md
+   inbound_lead_first_contact.md
+   inbound_lead_first_followup.md
+   inbound_lead_second_followup.md
+   coldcall_first_contact.md
+   coldcall_first_followup.md
+   coldcall_second_followup.md
+   coldcall_third_followup.md
    requirements.txt
    sample_prospects.xlsx
    .gitignore
    .streamlit/config.toml
    ```
+
+   `generic-templates/` is reference material only (the pre-refinement, AI-adapted versions
+   of these templates) — it doesn't need to be deployed, but there's no harm including it.
 
 5. Click **Commit changes**
 
@@ -188,29 +196,36 @@ to her whole mailbox rather than one folder. Worth knowing before asking for it.
 
 ---
 
-## The three templates
+## The templates
 
-The app runs a three-email sequence, one template per stage:
+Each workflow has its own sequence, one template file per stage, named for what it is:
 
-| File | Stage | When |
-|---|---|---|
-| `template.md` | First email | Never contacted |
-| `template_followup_1.md` | First follow-up | 7+ days after email 1, no reply |
-| `template_followup_2.md` | Second follow-up | 7+ days after email 2, no reply |
+| Workflow | File | Stage | Mode |
+|---|---|---|---|
+| In-bound Leads | `inbound_lead_first_contact.md` | 1 | adaptive — AI personalises from the research |
+| In-bound Leads | `inbound_lead_first_followup.md` | 2 | verbatim — approved copy, sent exactly as written |
+| In-bound Leads | `inbound_lead_second_followup.md` | 3 | verbatim |
+| Cold Call | `coldcall_first_contact.md` | 1 | adaptive |
+| Cold Call | `coldcall_first_followup.md` | 2 | verbatim |
+| Cold Call | `coldcall_second_followup.md` | 3 | verbatim |
+| Cold Call | `coldcall_third_followup.md` | 4 | verbatim |
 
-**Status of each file:**
+**Adaptive vs verbatim** (`sequence.verbatim_stages` in `config.json`): the first-contact
+template for each workflow is a skeleton — approved paragraphs plus one bracketed slot the AI
+fills from the prospect's website. The follow-up templates, refined 2026-08-18, are complete
+finished copy with no personalisation slot at all, so they're marked verbatim: the AI is told
+to reproduce them word for word, substituting only the greeting name (and `{{company}}` where
+it appears), rather than adapt them. See `is_verbatim_stage()` in `prospect_drafter.py`.
 
-- `template_followup_1.md` — **Tooka's real approved copy**, from the Word document. The three
-  WLCC paragraphs are reproduced faithfully; the AI only inserts one personalised sentence
-  after the greeting, and omits even that if it found nothing real to say.
-- `template_followup_2.md` — **adapted**, not supplied. Cut back to a short, graceful final
-  note. Replace it if Tooka has genuine third-email copy.
-- `template.md` — **Tooka's real approved copy**, from the LandWey example. The research
-  paragraph is the heart of it, with explicit rules for degrading gracefully when the website
-  gives the AI nothing to work with.
+**`generic-templates/`** holds the pre-refinement versions of the follow-up templates — the
+ones that used AI-adapted personalisation instead of fixed copy — kept for reference. They
+aren't wired into `config.json` and the app never reads them.
 
-Edit them on GitHub (click the file, click the pencil, commit) and the app picks the change up
-within a minute. No redeploy.
+**Subject lines** are fixed per workflow (`sequence.fixed_subject`), not AI-chosen, for every
+stage in that workflow — whatever subject a template file suggests is ignored.
+
+Edit a template on GitHub (click the file, click the pencil, commit) and the app picks the
+change up within a minute. No redeploy.
 
 Change the 7-day gap in `config.json` under `sequence.wait_days`.
 

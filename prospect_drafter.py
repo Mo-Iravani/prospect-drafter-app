@@ -117,9 +117,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wait_days": 7,
         # Stage number -> template file. Stage 1 is the first email.
         "templates": {
-            "1": "template.md",
-            "2": "template_followup_1.md",
-            "3": "template_followup_2.md",
+            "1": "inbound_lead_first_contact.md",
+            "2": "inbound_lead_first_followup.md",
+            "3": "inbound_lead_second_followup.md",
         },
         "labels": {
             "1": "First email",
@@ -127,7 +127,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "3": "Second follow-up",
         },
     },
-    "template_path": "template.md",
+    "template_path": "inbound_lead_first_contact.md",
     "sender": {
         "your_name": "Mo Iravani",
         "your_title": "",
@@ -456,7 +456,27 @@ STAGE_GUIDANCE = {
         "- No new pitch, no pressure, no third restatement of the offer.\n"
         "- This email should leave the door open, not push on it."
     ),
+    4: (
+        "This is a further follow-up, later than the standard three-email run. Previous\n"
+        "emails have gone unanswered.\n"
+        "- Be brief and gracious. This is not a new pitch.\n"
+        "- Make it easy to say no, or to say 'not now'.\n"
+        "- This is the last email in this sequence - leave the door open, not push on it."
+    ),
 }
+
+
+def is_verbatim_stage(cfg: dict, stage: int) -> bool:
+    """True if this stage's template is complete, final copy to send exactly as written,
+    rather than a skeleton for the AI to personalise.
+
+    Set per workflow via sequence.verbatim_stages. Used for the WLCC follow-up copy, which
+    arrived as finished emails with no personalisation slot at all - unlike every other
+    template here, which pairs approved paragraphs with a bracketed spot for one researched
+    observation. Feeding a no-slot template through the normal "adapt it" instructions risks
+    the model rewording carefully approved copy it was never asked to rewrite.
+    """
+    return str(stage) in {str(x) for x in cfg.get("sequence", {}).get("verbatim_stages", [])}
 
 
 def build_system_prompt(
@@ -464,19 +484,59 @@ def build_system_prompt(
 ) -> str:
     s = cfg["sender"]
     ai = cfg["ai"]
-    rules = "\n".join(f"- {r}" for r in ai.get("extra_rules", []))
-    stage_note = STAGE_GUIDANCE.get(stage, STAGE_GUIDANCE[1])
-    if called_first:
-        stage_note += (
-            "\n\nA PHONE CALL WAS ATTEMPTED before this email. Where the template provides a"
-            " sentence about having tried to call, include it."
+    verbatim = is_verbatim_stage(cfg, stage)
+
+    if verbatim:
+        # Self-contained on purpose: none of the adaptive rules below apply (there is no
+        # research to fold in, no word count the approved copy needs to fit), and cfg's own
+        # ai.extra_rules are mostly written for the adaptive stage-1 template - one of them
+        # literally instructs an opening line ("I am particularly impressed by...") that only
+        # exists in the cold-call first email, so appending it here would misdirect the model.
+        stage_note = (
+            f"This is email {stage} in the sequence. The template below is complete, "
+            "approved copy - send it exactly as written."
+        )
+        hard_rules = (
+            f"- Write in {ai['language']}.\n"
+            "- The TEMPLATE below is final, approved copy, not a skeleton to adapt. Reproduce "
+            "it in full, word for word, exactly as given.\n"
+            "- The ONLY substitutions you make: the greeting name (the prospect's first "
+            "name), and {{company}} if it appears in the template - replace it with the "
+            "prospect's actual company name, not a placeholder like \"your firm\".\n"
+            "- Do not add a sentence, remove a sentence, paraphrase, reorder paragraphs, or "
+            "shorten it to fit a word count. Do not add a personalised observation - none is "
+            "wanted for this email.\n"
+            "- Ignore the website research text below entirely. It is not used for this email."
         )
     else:
-        stage_note += (
-            "\n\nNO PHONE CALL WAS MADE. If the template contains a sentence about having tried"
-            " to call, OMIT IT COMPLETELY. Do not state or imply that anyone tried to phone"
-            " this person. This is a factual claim and it would be untrue."
+        rules = "\n".join(f"- {r}" for r in ai.get("extra_rules", []))
+        stage_note = STAGE_GUIDANCE.get(stage, STAGE_GUIDANCE[1])
+        if called_first:
+            stage_note += (
+                "\n\nA PHONE CALL WAS ATTEMPTED before this email. Where the template provides"
+                " a sentence about having tried to call, include it."
+            )
+        else:
+            stage_note += (
+                "\n\nNO PHONE CALL WAS MADE. If the template contains a sentence about having"
+                " tried to call, OMIT IT COMPLETELY. Do not state or imply that anyone tried to"
+                " phone this person. This is a factual claim and it would be untrue."
+            )
+        hard_rules = (
+            f"- Write in {ai['language']}.\n"
+            f"- Maximum {ai['max_words']} words in the body, excluding the greeting and"
+            " sign-off.\n"
+            "- Follow the structure and intent of the TEMPLATE below. Do not copy it verbatim;"
+            " adapt it.\n"
+            "- Exactly one specific observation drawn from the prospect's own website or"
+            " notes.\n"
+            "- If the research text is empty, unusable, or clearly about a different company,"
+            " DO NOT invent\n"
+            "  anything. Write the generic version of the template and say so in"
+            " personalisation_note.\n"
+            f"{rules}"
         )
+
     return f"""{stage_note}
 
 You write short, credible B2B outreach emails on behalf of {s['your_name']}\
@@ -488,13 +548,7 @@ About the sender's business:
 You will be given a prospect's details and text scraped from their website. Write ONE email.
 
 Hard rules:
-- Write in {ai['language']}.
-- Maximum {ai['max_words']} words in the body, excluding the greeting and sign-off.
-- Follow the structure and intent of the TEMPLATE below. Do not copy it verbatim; adapt it.
-- Exactly one specific observation drawn from the prospect's own website or notes.
-- If the research text is empty, unusable, or clearly about a different company, DO NOT invent
-  anything. Write the generic version of the template and say so in personalisation_note.
-{rules}
+{hard_rules}
 
 Return ONLY valid JSON with these keys:
   "subject"              - plain text, under 70 characters, no clickbait, no emoji
@@ -1378,7 +1432,7 @@ def stage_signature(cfg: dict, stage: int) -> str:
 
 def stage_template_path(cfg: dict, stage: int, base_dir: Path | None = None) -> Path:
     templates = cfg.get("sequence", {}).get("templates", {})
-    name = templates.get(str(stage)) or cfg.get("template_path", "template.md")
+    name = templates.get(str(stage)) or cfg.get("template_path", "inbound_lead_first_contact.md")
     p = Path(name)
     if base_dir and not p.is_absolute():
         p = base_dir / p
@@ -1605,7 +1659,7 @@ def main() -> None:
     ap.add_argument("--config", default="config.json", help="path to config file")
     sub = ap.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="write a starter config.json and template.md")
+    sub.add_parser("init", help="write a starter config.json and first-contact template")
     sub.add_parser("models", help="list AI models your API key can use")
     sub.add_parser("auth", help="sign in to Microsoft Graph (device code)")
     sub.add_parser("status", help="show what has been drafted so far")
