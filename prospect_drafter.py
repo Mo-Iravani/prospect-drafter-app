@@ -1391,7 +1391,7 @@ def apply_workflow(cfg: dict, name: str) -> dict:
         return cfg
     overlay = {k: v for k, v in block.items()
                if k not in ("label", "blurb", "fit_score", "writeback",
-                            "called_first_default")}
+                            "called_first_default", "mode", "max_rows")}
     merged = deep_merge(cfg, overlay)
     merged["workflow"] = {
         "name": name,
@@ -1400,6 +1400,11 @@ def apply_workflow(cfg: dict, name: str) -> dict:
         "fit_score": block.get("fit_score") or {},
         "writeback": block.get("writeback") or {},
         "called_first_default": bool(block.get("called_first_default", False)),
+        # What the workflow *is*, so the app can branch on behaviour rather than on which
+        # workflow is selected. "sequence" is the AI-written, status-driven kind both the
+        # lead workflows are; "batch" is a fixed email merged with a list.
+        "mode": str(block.get("mode") or "sequence").lower(),
+        "max_rows": int(block.get("max_rows") or 0),
     }
     return merged
 

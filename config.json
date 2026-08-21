@@ -318,6 +318,21 @@
           "4"
         ]
       }
+    },
+    "batch_email": {
+      "label": "Batch Email",
+      "mode": "batch",
+      "blurb": "You supply the wording; the spreadsheet supplies the names, references and anything else that changes. No AI and no research — it goes out exactly as you wrote it.",
+      "max_rows": 100,
+      "research": {
+        "enabled": false
+      },
+      "ai": {
+        "enabled": false
+      },
+      "writeback": {
+        "mode": "none"
+      }
     }
   }
 }

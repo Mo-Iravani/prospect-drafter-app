@@ -1,13 +1,14 @@
 # How to use the Prospect Drafter
 
-It reads each prospect's website and writes a personalised email for them. You read every one
-before anything happens. **It never sends anything** — you always press Send yourself.
+Two of its three workflows read each prospect's website and write a personalised email for
+them. The third sends one email you wrote yourself to a whole list. Either way you read every
+one before anything happens, and **it never sends anything** — you always press Send yourself.
 
 ---
 
 ## Pick your workflow first
 
-At the top of the page there are two buttons. Choose before you do anything else, because
+At the top of the page there are three buttons. Choose before you do anything else, because
 everything below changes with it.
 
 **In-bound Leads** — people who came to WLCC. The app reads the **Inbound Leads** sheet and
@@ -18,10 +19,15 @@ which **WLCC Fit Scores** to work first, and it tracks progress in that sheet's 
 column (column A). The emails are written cold: they never claim the person contacted WLCC
 first.
 
-Both read the same master report, just different sheets — so you upload the one file either
-way. Both now work identically: the Status dropdown is what tells the app which email is due,
-and the Status dropdown is what it updates afterwards. The only real differences are which
-sheet they read, and that Cold Call asks for a Fit Score first.
+Those two read the same master report, just different sheets — so you upload the one file
+either way, and both work identically: the Status dropdown is what tells the app which email
+is due, and the Status dropdown is what it updates afterwards. The only real differences are
+which sheet they read, and that Cold Call asks for a Fit Score first.
+
+**Batch Email** — one email you have already written, sent to a list. You supply the wording,
+the spreadsheet supplies the names, references and anything else that changes. There is no AI
+in this one at all: it goes out exactly as you typed it. **This one has its own instructions
+at the bottom of this page** — the steps below it are for the other two.
 
 If you switch workflow after writing drafts, the drafts are cleared. That's deliberate — it
 stops one workflow's batch being recorded into the other's sheet by mistake.
@@ -161,11 +167,32 @@ Trust your judgement over the app's. If a sentence sounds off, it is off.
 
 Three tabs. Use whichever is available:
 
-**Straight into Outlook** — click Connect, you'll see a short code, sign in once, and all your
-approved drafts appear in your Outlook Drafts folder. Open each, check, send.
+**Straight into Outlook** — all your approved drafts appear in your Outlook **Drafts** folder.
+Open each, check, send. This is the route to use whenever it's available: there's no limit on
+how long the email is, and nothing to download.
+
+There are two ways it can work, and the app picks whichever applies without being asked:
+
+- **Outlook on this computer.** If you're running the app on your own PC with Outlook
+  installed, it hands the drafts straight to Outlook. No sign-in, no setup at all. Outlook
+  starts up if it isn't already running. (Needs classic Outlook — the new Outlook for Windows
+  can't do this.)
+- **Outlook online.** On the shared web version there's no Outlook on the server, so it signs
+  in instead: click Connect, you'll see a short code, sign in once. This needs the one-off IT
+  setup; until that's done this tab says so.
 
 **One at a time** — click a name and a new Outlook message opens with the recipient, subject and
 message already filled in. Check it and press Send. Then come back for the next one.
+
+If a draft says **save as a draft, then open it** instead of opening straight away, that email
+is simply too long to travel inside a web address — nothing is wrong with it. The whole message
+has to fit in the address for the one-click version to work, and longer emails don't. This
+happens more with Batch Email, since a written-out email is usually longer than the AI's
+120-word ones.
+
+When that happens, **use Straight into Outlook instead** — no length limit, and the drafts go
+to Drafts without downloading anything. The button here saves the draft as a *file* you'd then
+have to open, which is only worth doing if you actually want the file.
 
 **Download files** — only if you've been asked to use it.
 
@@ -193,6 +220,126 @@ first time you use it.
 
 ---
 
+# Batch Email
+
+A different job from the other two: **one email, already written and approved, sent to a list**
+where only a few words change per person. No AI, no website reading. A hundred drafts appear
+instantly and say exactly what you typed.
+
+## 1. The email you're sending
+
+Type or paste it, or upload a Word file. Wherever a word changes per person, put the
+spreadsheet's column name in double braces:
+
+```
+Dear {{First Name}},
+
+Your membership reference is {{Ref No.}} and {{Company Name}} is listed for renewal
+on {{Renewal Date}}.
+
+Kind regards,
+Tooka
+```
+
+Capitals and spacing don't have to match your spreadsheet exactly — `{{first name}}` finds a
+column called "First Name", and `{{Ref No}}` finds one called "Ref No.".
+
+**The subject line is a separate box, and it takes placeholders too** — from the same columns.
+`Renewal — ref {{Ref No.}}` is fine.
+
+**A blank cell stops that row.** If someone's Company Name cell is empty, that row is blocked
+rather than sent as "Dear Amelia, and is listed for renewal". Where a bit genuinely doesn't
+apply to everybody — a job title some people don't have — put a question mark on the end,
+`{{Job Title?}}`, and a blank cell is then allowed: it comes out as nothing and the line
+closes up.
+
+### Links
+
+A box of plain text has nowhere to keep a link's address. So if you paste a hyperlink in from
+Word or Outlook, the words arrive and **the address is silently gone** — which is why a pasted
+link looks like it stopped working. Write it down instead, either way round:
+
+```
+Have a look at our [member directory](https://example.com/directory).
+
+Or just the address on its own: https://example.com/directory
+```
+
+Both become a proper clickable link in the finished email. The address can have a placeholder
+in it too, so everyone gets their own link:
+
+```
+Renew at https://portal.example.com/renew?ref={{Ref No.}}
+```
+
+Under the email box the app tells you how many links it found and where each one points, so you
+can see at a glance that it picked yours up. If it says **No links found** and your email is
+meant to have one, that's the thing to fix before going any further.
+
+**Uploading from Word keeps your hyperlinks** — they come through written in the
+`[words](address)` form above, so you can see and correct exactly where each one goes.
+
+**Everything else about Word formatting does not survive:** bold, colour, fonts and images are
+dropped, and tables come out as plain lines. The wording appears in a box for you to read and
+fix before going on. If the layout matters, paste it in and lay it out with blank lines
+instead.
+
+**Your sign-off:** if the email you paste already ends with "Kind regards, Tooka", the app
+notices and leaves the sidebar signature off, so nobody gets it twice. The tick box is there
+if it guesses wrong.
+
+## 2. Your list
+
+Upload the spreadsheet — one row per recipient, up to 100 at a time. Pick the sheet, and tell
+it which row holds the column names if it isn't row 1. The file is only read, never changed.
+
+## 3. Which column is which
+
+It matches your placeholders to your columns by name and shows you what it worked out. Anything
+it couldn't match gets a dropdown — nothing can be drafted until every placeholder has a
+column. You also confirm which column holds the **email addresses**; that is the one thing it
+can't work around.
+
+## 4. Check the list
+
+Three numbers: **Ready**, **Blocked**, **Duplicate addresses**.
+
+Blocked rows are listed by row number with what's wrong — a blank cell, a missing address, an
+address that isn't valid. Fix them in the spreadsheet and upload it again. They are named
+rather than silently dropped, because a batch going out thirteen short without anyone noticing
+is the thing worth preventing.
+
+Duplicates are a warning, not a block: the same address twice means that person gets two
+emails. Sometimes that's a shared inbox and it's fine — your call.
+
+## 5. Read one first
+
+Flick through a few. This is what catches what no check can: a column that reads oddly
+mid-sentence, a reference in the wrong format, a date that came out American.
+
+## 6, 7, 8. Make them, read them, send them
+
+Make the drafts, and you get a table of all of them. Leave anyone out by naming them in
+**Leave anyone out?**, or open **Change one of them by hand** to edit a single draft — edits
+there stay on that one draft; change the email itself in step 1 to change them all.
+
+Then the same three routes into Outlook as the other workflows. For a hundred, use **Straight
+into Outlook** — they land in your Drafts folder ready to read and send, with no limit on how
+long the email is. Batch emails are usually longer than the AI-written ones, so on **One at a
+time** expect more of them to come as a draft file to open rather than a link that opens by
+itself; see step 5 of the other workflows above for what that means.
+
+**Last check:** if any draft still has a `{{...}}` gap in it — usually because a subject line
+was edited by hand — it is held back and named, and cannot go to Outlook.
+
+## Keep a record
+
+Download the log at the bottom. One line per row of your list, including the blocked ones, with
+what happened to each. Worth keeping for its own sake, and next week it is the only way to tell
+who already had theirs. Batch Email does not write to your spreadsheet.
+
+---
+
 ## A few things worth knowing
 
 **Nothing is sent automatically.** Every single email waits in Outlook until you press Send.
@@ -212,4 +359,6 @@ replied the moment they answer, and the app will leave them alone from then on.
 break anything or send anything by accident.
 
 **Your prospects' details** go to Google's AI service to write the emails. Don't paste anything
-into the app that you wouldn't be comfortable sending outside the company.
+into the app that you wouldn't be comfortable sending outside the company. **Batch Email is the
+exception** — it never calls the AI, so nothing on a batch list leaves the app except into your
+own Outlook drafts.

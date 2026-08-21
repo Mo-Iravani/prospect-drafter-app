@@ -3,3 +3,13 @@ requests>=2.31
 openpyxl>=3.1
 beautifulsoup4>=4.12
 lxml>=5.0
+
+# Not listed here on purpose: pywin32.
+#
+# It is what lets the app put drafts straight into Outlook's Drafts folder on the machine it
+# is running on, which is the nicest route by far - no sign-in, no file to open, no limit on
+# how long the email is. But it is Windows-only and has no Linux build, so adding it here
+# would break the Streamlit Cloud deployment on install.
+#
+# run-local.cmd installs it separately, where we already know we are on Windows. The app
+# checks for it at runtime and only offers that route when it is actually usable.
